@@ -200,6 +200,7 @@ jobs:
           APP="build/WingControl.xcarchive/Products/Applications/WingControl.app"
           echo "应用显示名: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "${APP}/Info.plist")"
           echo "Bundle ID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Info.plist")"
+          echo "Scene Delegate: $(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' "${APP}/Info.plist")"
           if [ "${{ steps.mode.outputs.signed }}" = "1" ]; then
             codesign -dv --verbose=2 "${APP}" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Signature=' || true
           fi
