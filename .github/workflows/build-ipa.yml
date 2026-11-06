@@ -12,6 +12,15 @@ on:
     branches: [main, master]
   workflow_dispatch:
     inputs:
+      runner:
+        description: 'macOS runner 镜像（macOS 14 已于 2026-11-02 退役，勿再使用）'
+        required: true
+        default: 'macos-15'
+        type: choice
+        options:
+          - macos-15
+          - macos-latest
+          - macos-15-intel
       sign_mode:
         description: '签名方式（auto = 有证书就签名，否则免签名）'
         required: true
@@ -53,8 +62,10 @@ env:
 jobs:
   build:
     name: 归档并导出 IPA
-    # macos-14 自带 Xcode 15/16；如需更新可改成 macos-15 或 macos-latest
-    runs-on: macos-14
+    # macos-14 镜像已于 2026-11-02 退役，继续使用会报
+    # "The configuration 'macos-14-arm64-us-default' is not supported"。
+    # 默认固定在 macos-15（arm64 / Xcode 16.x）；手动运行时可从 runner 输入切换。
+    runs-on: ${{ github.event.inputs.runner || 'macos-15' }}
 
     steps:
       - name: 检出代码
@@ -63,8 +74,10 @@ jobs:
       - name: 确认 Xcode 与共享 Scheme
         run: |
           set -euo pipefail
+          echo "runner：$RUNNER_OS / $RUNNER_ARCH / $RUNNER_NAME"
           xcode-select -p
           xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
           test -f "WingControl.xcodeproj/xcshareddata/xcschemes/WingControl.xcscheme"
           xcodebuild -list -project "$PROJECT"
 
@@ -208,3 +221,12 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
           gh release upload "$GITHUB_REF_NAME" "$IPA" --clobber
+
+      - name: 上传构建日志（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build/*.log
+          if-no-files-found: ignore
+          retention-days: 14
