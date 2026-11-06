@@ -174,7 +174,7 @@ final class BLEManager: NSObject, ObservableObject {
         central.connect(target, options: [CBConnectPeripheralOptionNotifyOnDisconnectionKey: true])
         connectTimer?.invalidate()
         connectTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: false) { [weak self] _ in
-            guard let self, case .connecting = self.phase else { return }
+            guard let self = self, case .connecting = self.phase else { return }
             self.central?.cancelPeripheralConnection(target)
             self.phase = .failed("连接超时，请重试")
             self.onLog?("连接超时，请重试")

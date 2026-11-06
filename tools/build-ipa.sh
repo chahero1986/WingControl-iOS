@@ -145,8 +145,16 @@ PLIST
   IPA="${IPA_DIR}/WingControl-signed.ipa"
   if [ "${EXPORTED}" != "${IPA}" ]; then mv "${EXPORTED}" "${IPA}"; fi
 else
+  # 免签名直接组装 Payload，不要走 -exportArchive（未签名的 archive 会导出失败）。
+  # 必须先 mkdir Payload 再 cp -R app Payload/：若目标不存在，
+  # cp -R 会把 .app 的内容直接铺进 Payload/，IPA 结构就坏了。
   echo "==> 打包免签名 IPA ..."
-  cp -R "${APP}" "${STAGE}/Payload"
+  mkdir -p "${STAGE}/Payload"
+  cp -R "${APP}" "${STAGE}/Payload/"
+  test -f "${STAGE}/Payload/${APP_FILE}/Info.plist" || {
+    echo "IPA 结构错误：Payload/${APP_FILE} 不是完整的 .app" >&2
+    exit 1
+  }
   IPA="${IPA_DIR}/WingControl-unsigned.ipa"
   (cd "${STAGE}" && zip -qry "${IPA}" Payload)
 fi
@@ -159,4 +167,8 @@ fi
 echo "==> 产物：${IPA}"
 echo "==> 大小：$(du -h "${IPA}" | cut -f1)"
 echo "==> SHA256：$(shasum -a 256 "${IPA}" | cut -d' ' -f1)"
-unzip -l "${IPA}" | grep -m 1 'Payload/' || true
+unzip -l "${IPA}" | grep -E "Payload/${APP_FILE}/Info\.plist" >/dev/null || {
+  echo "IPA 结构异常：缺少 Payload/${APP_FILE}/Info.plist" >&2
+  exit 1
+}
+echo "==> IPA 结构校验通过：Payload/${APP_FILE}/Info.plist"

@@ -39,21 +39,21 @@ private struct StepLadder: View {
         VStack(spacing: Spacing.xs) {
             Button("升") { controller.stepUp() }
                 .buttonStyle(WingCapsuleButtonStyle(onDark: true))
-                .frame(width: 44, minHeight: 44)
+                .frame(minWidth: 44, minHeight: 44)
                 .accessibilityLabel("升高一档")
                 .accessibilityHint("在当前档位上升一级")
 
             ForEach([5, 4, 3], id: \.self) { value in
                 Button("\(value)") { controller.setStep(value) }
                     .buttonStyle(WingCapsuleButtonStyle(active: controller.state.step >= value, onDark: true))
-                    .frame(width: 44, minHeight: 44)
+                    .frame(minWidth: 44, minHeight: 44)
                     .accessibilityLabel("设置尾翼档位为 \(value)")
                     .accessibilityValue(controller.state.step >= value ? "已选中" : "未选中")
             }
 
             Button("降") { controller.stepDown() }
                 .buttonStyle(WingCapsuleButtonStyle(onDark: true))
-                .frame(width: 44, minHeight: 44)
+                .frame(minWidth: 44, minHeight: 44)
                 .accessibilityLabel("降低一档")
                 .accessibilityHint("在当前档位下降一级")
         }

@@ -100,7 +100,24 @@ bash tools/build-ipa.sh                # 免签名 → build/ipa/WingControl-uns
 bash tools/build-ipa.sh --signed       # 需先设置 IOS_TEAM_ID / IOS_PROFILE_UUID
 ```
 
-> **维护约定**：workflow 与脚本中的 shell 变量一律写成 `${VAR}`，且工作流显式设置 `LANG/LC_ALL=en_US.UTF-8`。macOS 自带的 bash 3.2 在 `set -u` 下会把变量名后紧跟的中文标点字节吞进变量名，写成 `$VAR；` 会报 `unbound variable`；花括号能彻底划定边界。
+### 提交前本地预检（Windows 也能跑）
+
+本机没有 Swift 编译器，SwiftUI API 误用只有推到 CI 才会暴露。提交前先跑：
+
+```bash
+python tools/verify_swift_sources.py     # Swift 源码静态检查
+python tools/verify_protocol.py          # 协议帧与校验规则
+```
+
+`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡与旧应用名；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
+
+首次真实编译（Xcode 16.4 / macOS 15 runner）报过 `DailyModeView.swift:42: extra argument 'minHeight' in call`：SwiftUI 的 `frame` 有两个重载——`frame(width:height:alignment:)` 与 `frame(minWidth:…:maxHeight:alignment:)`——`width`/`height` 不能和 `min*`/`max*` 同用。现在统一改为 `.frame(minWidth: 44, minHeight: 44)`，既合法又能随 Dynamic Type 放大。
+
+> **维护约定**
+> 1. 触控目标一律用 `minWidth`/`minHeight`，不要写 `width` + `minHeight`（静态预检会拦截）；
+> 2. 字符串插值里出现 `Substring` 要用 `String(...)` 包一层，`LocalizedStringKey` 没有对应插值重载；
+> 3. workflow 与脚本中的 shell 变量一律写成 `${VAR}`，且工作流显式设置 `LANG/LC_ALL=en_US.UTF-8`。macOS 自带的 bash 3.2 在 `set -u` 下会把变量名后紧跟的中文标点字节吞进变量名，写成 `$VAR；` 会报 `unbound variable`；花括号能彻底划定边界。
+> 4. 仓库根的 `.gitattributes` 强制所有文本文件用 LF 存储；Windows 编辑后不要提交 CRLF，macOS 的 bash 3.2 会把 `\r` 当成命令内容的一部分。
 
 ---
 
@@ -110,6 +127,7 @@ bash tools/build-ipa.sh --signed       # 需先设置 IOS_TEAM_ID / IOS_PROFILE_
 WingControl-iOS/                              # ← 作为 GitHub 仓库根目录
 ├── .github/workflows/build-ipa.yml           # GitHub Actions 自动归档并导出 IPA
 ├── .gitignore                                # 忽略 build/ 与签名材料
+├── .gitattributes                            # 强制 LF 换行（CI bash 脚本必需）
 ├── WingControl.xcodeproj/
 │   ├── project.pbxproj                       # 手工生成的完整 Xcode 工程
 │   ├── project.xcworkspace/
@@ -137,6 +155,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 ├── Preview/index.html                        # 单文件交互原型（图片已内嵌 base64）
 └── tools/
     ├── build-ipa.sh                          # archive + 导出 IPA（CI 与本地共用）
+    ├── verify_swift_sources.py               # Swift 源码静态预检（无需 Xcode）
     └── verify_protocol.py                    # 协议一致性自检脚本
 ```
 
@@ -211,7 +230,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 2. 原小程序的商城跳转、微信登录、`navigateToMiniProgram` 在 iOS 无对应能力，已移除。
 3. 原包中 `weiyistart.gif`、`logo.gif` 的长启动动画未移植，改为系统启动屏；`track_top.gif` / `fire.gif` 已拆帧保留。
 4. 尚未在真机 + 真实 JDY 模块上联调。若你的模块服务 UUID 不是 `FFE0/FFE1`，当前「动态发现主服务」逻辑仍可工作；若特征值属性与假设不符，请把 `BLEManager.swift` 中的筛选条件按实际模块调整。
-5. 工程由脚本生成并在 Windows 上完成静态校验，**本地未在 Xcode 中编译过**；GitHub Actions 首次运行日志即为最终编译验证。首次打开若 Xcode 提示升级设置，按提示确认即可。
+5. 工程由脚本生成并在 Windows 上完成静态校验；GitHub Actions 上已用 Xcode 16.4 / iOS 18.5 SDK 跑到 Swift 编译阶段，并按首个真实报错修复了 `.frame` 重载误用（见第 2 节）。最终 archive/导出成功仍以下一次 CI 日志为准。首次打开若 Xcode 提示升级设置，按提示确认即可。
 
 ---
 

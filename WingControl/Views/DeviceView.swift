@@ -49,7 +49,7 @@ struct DeviceView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(device.name)
                                         .font(.body)
-                                    Text("信号 \(device.rssi) dBm · \(device.id.uuidString.prefix(8))")
+                                    Text("信号 \(device.rssi) dBm · \(String(device.id.uuidString.prefix(8)))")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
