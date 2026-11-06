@@ -1,0 +1,340 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		000000000000000000001001 /* WingControlApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001000 /* WingControlApp.swift */; };
+		000000000000000000001003 /* WingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001002 /* WingProtocol.swift */; };
+		000000000000000000001005 /* WingUIState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001004 /* WingUIState.swift */; };
+		000000000000000000001007 /* BLEManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001006 /* BLEManager.swift */; };
+		000000000000000000001009 /* WingController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001008 /* WingController.swift */; };
+		00000000000000000000100B /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000100A /* Haptics.swift */; };
+		00000000000000000000100D /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000100C /* Theme.swift */; };
+		00000000000000000000100F /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000100E /* RootTabView.swift */; };
+		000000000000000000001011 /* ControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001010 /* ControlView.swift */; };
+		000000000000000000001013 /* DailyModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001012 /* DailyModeView.swift */; };
+		000000000000000000001015 /* TrackModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001014 /* TrackModeView.swift */; };
+		000000000000000000001017 /* DeviceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001016 /* DeviceView.swift */; };
+		000000000000000000001019 /* InfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000001018 /* InfoView.swift */; };
+		00000000000000000000101B /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000101A /* Components.swift */; };
+		00000000000000000000101D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000101C /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		000000000000000000001000 /* WingControlApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WingControlApp.swift"; sourceTree = "<group>"; };
+		000000000000000000001002 /* WingProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WingProtocol.swift"; sourceTree = "<group>"; };
+		000000000000000000001004 /* WingUIState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WingUIState.swift"; sourceTree = "<group>"; };
+		000000000000000000001006 /* BLEManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BLEManager.swift"; sourceTree = "<group>"; };
+		000000000000000000001008 /* WingController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WingController.swift"; sourceTree = "<group>"; };
+		00000000000000000000100A /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Haptics.swift"; sourceTree = "<group>"; };
+		00000000000000000000100C /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Theme.swift"; sourceTree = "<group>"; };
+		00000000000000000000100E /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RootTabView.swift"; sourceTree = "<group>"; };
+		000000000000000000001010 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ControlView.swift"; sourceTree = "<group>"; };
+		000000000000000000001012 /* DailyModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DailyModeView.swift"; sourceTree = "<group>"; };
+		000000000000000000001014 /* TrackModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TrackModeView.swift"; sourceTree = "<group>"; };
+		000000000000000000001016 /* DeviceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DeviceView.swift"; sourceTree = "<group>"; };
+		000000000000000000001018 /* InfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "InfoView.swift"; sourceTree = "<group>"; };
+		00000000000000000000101A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Components.swift"; sourceTree = "<group>"; };
+		00000000000000000000101C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		00000000000000000000101E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		00000000000000000000101F /* WingControl.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WingControl.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		00000000000000000000102B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		000000000000000000001020 = {
+			isa = PBXGroup;
+			children = (000000000000000000001021 /* WingControl */, 000000000000000000001022 /* Products */,);
+			sourceTree = "<group>";
+		};
+		000000000000000000001021 /* WingControl */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000001023 /* App */,
+				000000000000000000001024 /* Model */,
+				000000000000000000001025 /* Services */,
+				000000000000000000001026 /* Theme */,
+				000000000000000000001027 /* Views */,
+				00000000000000000000101C /* Assets.xcassets */,
+				00000000000000000000101E /* Info.plist */,
+			);
+			path = WingControl;
+			sourceTree = "<group>";
+		};
+		000000000000000000001023 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000001000 /* WingControlApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		000000000000000000001024 /* Model */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000001002 /* WingProtocol.swift */,
+				000000000000000000001004 /* WingUIState.swift */,
+			);
+			path = Model;
+			sourceTree = "<group>";
+		};
+		000000000000000000001025 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000001006 /* BLEManager.swift */,
+				000000000000000000001008 /* WingController.swift */,
+				00000000000000000000100A /* Haptics.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		000000000000000000001026 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000100C /* Theme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		000000000000000000001027 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000100E /* RootTabView.swift */,
+				000000000000000000001010 /* ControlView.swift */,
+				000000000000000000001012 /* DailyModeView.swift */,
+				000000000000000000001014 /* TrackModeView.swift */,
+				000000000000000000001016 /* DeviceView.swift */,
+				000000000000000000001018 /* InfoView.swift */,
+				00000000000000000000101A /* Components.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		000000000000000000001022 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000101F /* WingControl.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		000000000000000000001029 /* WingControl */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000001032 /* Build configuration list for PBXNativeTarget "WingControl" */;
+			buildPhases = (00000000000000000000102A /* Sources */, 00000000000000000000102B /* Frameworks */, 00000000000000000000102C /* Resources */,);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WingControl;
+			productName = WingControl;
+			productReference = 00000000000000000000101F /* WingControl.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		000000000000000000001028 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = { 000000000000000000001029 = { CreatedOnToolsVersion = 15.0; }; };
+			};
+			buildConfigurationList = 000000000000000000001031 /* Build configuration list for PBXProject "WingControl" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = ( en, Base, "zh-Hans", );
+			mainGroup = 000000000000000000001020;
+			productRefGroup = 000000000000000000001022 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = ( 000000000000000000001029 /* WingControl */, );
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		00000000000000000000102C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				00000000000000000000101D /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		00000000000000000000102A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000001001 /* WingControlApp.swift in Sources */,
+				000000000000000000001003 /* WingProtocol.swift in Sources */,
+				000000000000000000001005 /* WingUIState.swift in Sources */,
+				000000000000000000001007 /* BLEManager.swift in Sources */,
+				000000000000000000001009 /* WingController.swift in Sources */,
+				00000000000000000000100B /* Haptics.swift in Sources */,
+				00000000000000000000100D /* Theme.swift in Sources */,
+				00000000000000000000100F /* RootTabView.swift in Sources */,
+				000000000000000000001011 /* ControlView.swift in Sources */,
+				000000000000000000001013 /* DailyModeView.swift in Sources */,
+				000000000000000000001015 /* TrackModeView.swift in Sources */,
+				000000000000000000001017 /* DeviceView.swift in Sources */,
+				000000000000000000001019 /* InfoView.swift in Sources */,
+				00000000000000000000101B /* Components.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		00000000000000000000102D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ( "DEBUG=1", "$(inherited)", );
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		00000000000000000000102E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		00000000000000000000102F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WingControl/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = ( "$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kela.WingControl;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		000000000000000000001030 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WingControl/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = ( "$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kela.WingControl;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		000000000000000000001031 /* Build configuration list for PBXProject "WingControl" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = ( 00000000000000000000102D /* Debug */, 00000000000000000000102E /* Release */, );
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000001032 /* Build configuration list for PBXNativeTarget "WingControl" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = ( 00000000000000000000102F /* Debug */, 000000000000000000001030 /* Release */, );
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 000000000000000000001028 /* Project object */;
+}
