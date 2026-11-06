@@ -1,0 +1,210 @@
+name: 构建 IPA
+
+# 把 WingControl-iOS 目录作为 GitHub 仓库根目录推送即可生效。
+# 默认零配置：不设置任何 Secrets 也能跑，产出免签名 IPA。
+# 配置 4 个 Secrets 后自动升级为签名 IPA；打 v* 标签时额外发布到 Release。
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      sign_mode:
+        description: '签名方式（auto = 有证书就签名，否则免签名）'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - unsigned
+          - signed
+      export_method:
+        description: '导出方式（仅签名模式生效）'
+        required: true
+        default: 'ad-hoc'
+        type: choice
+        options:
+          - ad-hoc
+          - development
+          - app-store
+          - enterprise
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT: WingControl.xcodeproj
+  SCHEME: WingControl
+  REQUESTED_SIGN_MODE: ${{ github.event.inputs.sign_mode || 'auto' }}
+  IOS_EXPORT_METHOD: ${{ github.event.inputs.export_method || 'ad-hoc' }}
+  # Secrets 映射到 env，才能在 shell 里判断是否配置齐全（GitHub 会自动遮蔽输出）
+  P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+  P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+  PROFILE_BASE64: ${{ secrets.IOS_MOBILEPROVISION_BASE64 }}
+  IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+
+jobs:
+  build:
+    name: 归档并导出 IPA
+    # macos-14 自带 Xcode 15/16；如需更新可改成 macos-15 或 macos-latest
+    runs-on: macos-14
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 确认 Xcode 与共享 Scheme
+        run: |
+          set -euo pipefail
+          xcode-select -p
+          xcodebuild -version
+          test -f "WingControl.xcodeproj/xcshareddata/xcschemes/WingControl.xcscheme"
+          xcodebuild -list -project "$PROJECT"
+
+      - name: 决定签名方式
+        id: mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          has_material=0
+          if [ -n "${P12_BASE64:-}" ] && [ -n "${P12_PASSWORD:-}" ] \
+             && [ -n "${PROFILE_BASE64:-}" ] && [ -n "${IOS_TEAM_ID:-}" ]; then
+            has_material=1
+          fi
+          echo "签名材料齐备：$has_material；请求模式：${REQUESTED_SIGN_MODE:-auto}"
+
+          case "${REQUESTED_SIGN_MODE:-auto}" in
+            unsigned) signed=0 ;;
+            signed)
+              if [ "$has_material" -eq 0 ]; then
+                echo "::error::缺少签名材料，请在仓库 Settings → Secrets 配置 IOS_P12_BASE64 / IOS_P12_PASSWORD / IOS_MOBILEPROVISION_BASE64 / IOS_TEAM_ID"
+                exit 1
+              fi
+              signed=1
+              ;;
+            *) signed=$has_material ;;
+          esac
+
+          if [ "$signed" -eq 1 ]; then
+            echo "signed=1" >> "$GITHUB_OUTPUT"
+            echo "ipa=build/ipa/WingControl-signed.ipa" >> "$GITHUB_OUTPUT"
+            echo "artifact=WingControl-signed-IPA" >> "$GITHUB_OUTPUT"
+            echo "::notice::本次产出【已签名】IPA"
+          else
+            echo "signed=0" >> "$GITHUB_OUTPUT"
+            echo "ipa=build/ipa/WingControl-unsigned.ipa" >> "$GITHUB_OUTPUT"
+            echo "artifact=WingControl-unsigned-IPA" >> "$GITHUB_OUTPUT"
+            echo "::notice::本次产出【免签名】IPA，可用 AltStore / Sideloadly / TrollStore 侧载"
+          fi
+
+      - name: 导入签名证书与描述文件
+        id: signing
+        if: steps.mode.outputs.signed == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/wing-signing"
+          rm -rf "$WORK"
+          mkdir -p "$WORK" "$HOME/Library/MobileDevice/Provisioning Profiles"
+
+          # 兼容 macOS BSD base64(-D) 与 GNU base64(-d)，并容忍 Secret 中的换行/空格
+          b64decode() {
+            local payload="$1" dest="$2"
+            printf '%s' "$payload" | tr -d '\r\n\t ' | base64 -D > "$dest" 2>/dev/null \
+              || printf '%s' "$payload" | tr -d '\r\n\t ' | base64 -d > "$dest"
+            test -s "$dest"
+          }
+          b64decode "$P12_BASE64" "$WORK/cert.p12"
+          b64decode "$PROFILE_BASE64" "$WORK/profile.mobileprovision"
+
+          # 解析描述文件，取 UUID 与名称
+          security cms -D -i "$WORK/profile.mobileprovision" > "$WORK/profile.plist"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$WORK/profile.plist")"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$WORK/profile.plist")"
+          echo "描述文件：$PROFILE_NAME（$PROFILE_UUID）"
+          cp "$WORK/profile.mobileprovision" \
+             "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          # 建临时钥匙串，导入 P12，放开 codesign 对私钥的访问
+          KEYCHAIN="$WORK/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$WORK/cert.p12" -P "$P12_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null || true
+          LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+          if [ -f "$LOGIN_KEYCHAIN" ]; then
+            security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+          else
+            security list-keychains -d user -s "$KEYCHAIN"
+          fi
+          security default-keychain -s "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+          echo "profile_uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
+
+      - name: 归档并导出 IPA
+        env:
+          IOS_PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.mode.outputs.signed }}" = "1" ]; then
+            bash tools/build-ipa.sh --signed
+          else
+            bash tools/build-ipa.sh --unsigned
+          fi
+
+      - name: 校验 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          IPA="${{ steps.mode.outputs.ipa }}"
+          test -f "$IPA"
+          unzip -t "$IPA" | tail -n 2
+          APP="build/WingControl.xcarchive/Products/Applications/WingControl.app"
+          echo "应用显示名：$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist")"
+          echo "Bundle ID：$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")"
+          if [ "${{ steps.mode.outputs.signed }}" = "1" ]; then
+            codesign -dv --verbose=2 "$APP" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Signature=' || true
+          fi
+          {
+            echo "### IPA 构建完成"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 签名 | $([ "${{ steps.mode.outputs.signed }}" = "1" ] && echo 已签名 || echo 免签名) |"
+            echo "| 文件 | \`$IPA\` |"
+            echo "| 大小 | $(du -h "$IPA" | cut -f1) |"
+            echo "| SHA256 | \`$(shasum -a 256 "$IPA" | cut -d' ' -f1)\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传 IPA 工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.mode.outputs.artifact }}-${{ github.run_number }}
+          path: ${{ steps.mode.outputs.ipa }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 发布到 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          IPA="${{ steps.mode.outputs.ipa }}"
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" "$IPA" --clobber
