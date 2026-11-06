@@ -1,0 +1,22 @@
+# 构建产物
+build/
+DerivedData/
+*.xcarchive/
+*.ipa
+*.dSYM.zip
+
+# 签名材料（绝不要提交）
+*.p12
+*.cer
+*.mobileprovision
+ExportOptions.plist
+
+# Xcode 用户数据
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
