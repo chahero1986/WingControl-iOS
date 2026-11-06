@@ -83,6 +83,16 @@ jobs:
           test -f "WingControl.xcodeproj/xcshareddata/xcschemes/WingControl.xcscheme"
           xcodebuild -list -project "${PROJECT}"
 
+      - name: Swift 源码静态预检
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            python3 tools/verify_swift_sources.py
+          else
+            echo "::notice::未找到 python3，跳过静态预检（xcodebuild 仍会做完整类型检查）"
+          fi
+
       - name: 决定签名方式
         id: mode
         shell: bash
