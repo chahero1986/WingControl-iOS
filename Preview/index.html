@@ -131,10 +131,12 @@
                 color:#fff;font-size:14px;font-weight:600;cursor:pointer}
   .sheet .cancel{background:#333338;color:#ddd;margin-top:8px}
   .note{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.7}
+  .boot-hint{color:#c9c9cf;font-size:13px;line-height:2;text-align:center;padding:64px 12px;word-break:break-all}
   @media(max-width:900px){.page{grid-template-columns:1fr;justify-items:center}.intro{max-width:390px}}
 </style>
 </head>
 <body>
+<noscript><p style="padding:16px;color:#b00020">此预览页需要启用 JavaScript 才能渲染界面。</p></noscript>
 <div class="page">
   <div class="intro">
     <div class="badge">iOS App 交互原型 · 演示模式</div>
@@ -163,7 +165,7 @@
     <div class="island"></div>
     <div class="statusbar"><span>9:41</span><span>●●● ▰</span></div>
     <div class="navbar"><span id="navtitle">尾翼控制器</span><span class="icon" onclick="goTab('device')">⌁</span></div>
-    <div class="screen" id="screen"></div>
+    <div class="screen" id="screen"><div class="boot-hint">界面加载中…<br>若一直停留在此，请打开浏览器控制台查看错误。</div></div>
     <div class="tabbar">
       <button id="tab-control" class="on" onclick="goTab('control')"><span class="ti">☷</span>控制</button>
       <button id="tab-device" onclick="goTab('device')"><span class="ti">◈</span>设备</button>
@@ -367,6 +369,11 @@ function closeSheet(){
   document.getElementById('sheet').classList.remove('show');
   document.getElementById('overlay').classList.remove('show');
 }
+// 兜底：脚本报错时不要把手机屏留成一块纯黑
+window.onerror=function(msg){
+  var s=document.getElementById('screen');
+  if(s){s.innerHTML='<div class="boot-hint">界面脚本出错<br>'+esc(msg)+'</div>';}
+};
 render();
 </script>
 </body>

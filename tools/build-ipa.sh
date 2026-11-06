@@ -108,6 +108,15 @@ fi
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP}/Info.plist")"
 BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${APP}/Info.plist")"
 echo "==> 显示名校验通过: ${ACTUAL_NAME} (${VERSION} / ${BUILD})"
+
+# 校验启动场景配置：缺失 scene delegate 时 App 会停在黑屏，别把这种包发出去
+SCENE_DELEGATE="$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' "${APP}/Info.plist" 2>/dev/null || true)"
+if [ "${SCENE_DELEGATE}" != "WingControl.SceneDelegate" ]; then
+  echo "启动场景配置错误: 期望 WingControl.SceneDelegate, 实际 '${SCENE_DELEGATE}'；该包启动会黑屏" >&2
+  exit 1
+fi
+echo "==> 启动场景校验通过: ${SCENE_DELEGATE}"
+
 mkdir -p "${IPA_DIR}" "${STAGE}"
 
 if [ "${SIGNED}" -eq 1 ]; then

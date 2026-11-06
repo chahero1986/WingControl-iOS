@@ -109,7 +109,7 @@ python tools/verify_swift_sources.py     # Swift 源码静态检查
 python tools/verify_protocol.py          # 协议帧与校验规则
 ```
 
-`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡与旧应用名；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
+`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是近黑色）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
 
 首次真实编译（Xcode 16.4 / macOS 15 runner）报过 `DailyModeView.swift:42: extra argument 'minHeight' in call`：SwiftUI 的 `frame` 有两个重载——`frame(width:height:alignment:)` 与 `frame(minWidth:…:maxHeight:alignment:)`——`width`/`height` 不能和 `min*`/`max*` 同用。现在统一改为 `.frame(minWidth: 44, minHeight: 44)`，既合法又能随 Dynamic Type 放大。
 
@@ -117,7 +117,29 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 > 1. 触控目标一律用 `minWidth`/`minHeight`，不要写 `width` + `minHeight`（静态预检会拦截）；
 > 2. 字符串插值里出现 `Substring` 要用 `String(...)` 包一层，`LocalizedStringKey` 没有对应插值重载；
 > 3. workflow 与脚本中的 shell 变量一律写成 `${VAR}`，且工作流显式设置 `LANG/LC_ALL=en_US.UTF-8`。macOS 自带的 bash 3.2 在 `set -u` 下会把变量名后紧跟的中文标点字节吞进变量名，写成 `$VAR；` 会报 `unbound variable`；花括号能彻底划定边界。
-> 4. 仓库根的 `.gitattributes` 强制所有文本文件用 LF 存储；Windows 编辑后不要提交 CRLF，macOS 的 bash 3.2 会把 `\r` 当成命令内容的一部分。
+> 4. 仓库根的 `.gitattributes` 强制所有文本文件用 LF 存储；Windows 编辑后不要提交 CRLF，macOS 的 bash 3.2 会把 `\r` 当成命令内容的一部分；
+> 5. 不要删 `Info.plist` 的 `UISceneConfigurations`，也不要把应用入口改回 SwiftUI 隐式生命周期——工程是手工生成的，没有 Xcode 自动生成的场景清单，改回去会黑屏（静态预检会拦截）。
+
+### 启动黑屏的修复说明
+
+现象：装到真机 / 模拟器后一直停在全黑画面，没有报错也没有崩溃日志。
+
+根因有两层：
+
+1. 工程 `GENERATE_INFOPLIST_FILE = NO`，`Info.plist` 手写；原来 `UIApplicationSceneManifest` 只有 `UIApplicationSupportsMultipleScenes`，**缺少 `UISceneConfigurations`**。系统据此认为 App 走场景生命周期，却找不到场景代理，于是创建了 `UIWindowScene` 但没有创建 `UIWindow`，SwiftUI 的 `WindowGroup` 也就无处渲染。
+2. 启动屏 `LaunchBackground` 原本是小程序同款 `#0F0F0F` 深色，与「无窗口」叠在一起，视觉上就是纯黑。
+
+修复：
+
+| 文件 | 改动 |
+| --- | --- |
+| `WingControl/App/WingControlApp.swift` | 改为 `@main AppDelegate` + `SceneDelegate`；`SceneDelegate` 显式创建 `UIWindow`、设置浅色底并装载 `UIHostingController(rootView: WingRootView)`；`NSLog` 打印启动与窗口装载，便于查日志 |
+| `WingControl/Info.plist` | 补全 `UISceneConfigurations` → `UIWindowSceneSessionRoleApplication` → `UISceneDelegateClassName = WingControl.SceneDelegate` |
+| `LaunchBackground.colorset` | 由 `#0F0F0F` 改为浅色 `#F2F2F7`，启动阶段不再像黑屏 |
+| `Preview/index.html` | 手机屏加「界面加载中」占位与 `window.onerror` 兜底，JS 出错时直接显示错误而不是纯黑 |
+| `tools/verify_swift_sources.py` | 新增启动链路检查，防止后续改动把黑屏问题带回来 |
+
+> 界面仍全是 SwiftUI；只是把「谁来建窗口」这件事从系统隐式推断改成代码显式创建。真机上若仍异常，可用 Xcode 的 Devices & Simulators / Console 过滤 `WingControl` 看是否打印 `application didFinishLaunching` 与 `window installed`：前者没有 = 启动前就失败（签名 / bundle 配置），只有前者没有后者 = 场景未连接，`RootTabView` 报错 = 视图层问题。
 
 ---
 
@@ -135,7 +157,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 ├── WingControl/
 │   ├── Info.plist                            # 应用名称、蓝牙权限、启动屏、方向
 │   ├── Assets.xcassets/                      # 25 个 imageset + AppIcon + 2 个 colorset
-│   ├── App/WingControlApp.swift              # @main 入口
+│   ├── App/WingControlApp.swift              # 应用入口 + SceneDelegate + SwiftUI 根视图
 │   ├── Model/
 │   │   ├── WingProtocol.swift                # 指令帧编解码、速度校验、档位映射
 │   │   └── WingUIState.swift                 # 页面状态、弹窗、日志模型

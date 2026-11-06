@@ -14,6 +14,8 @@
      LocalizedStringKey 上没有对应 appendInterpolation 重载，需要 String(...)。
   3. 项目约定：可选绑定一律写 `guard let self = self`，不用 Swift 5.7 简写。
   4. 括号平衡、旧应用名残留。
+  5. 启动链路：Info.plist 的场景清单必须指向 SceneDelegate，且全工程只能有
+     一个应用入口、启动屏不能是近黑色（否则启动失败时表现为黑屏）。
 
 用法：
     python tools/verify_swift_sources.py           # 检查全部 Swift 文件
@@ -21,6 +23,8 @@
 
 from __future__ import annotations
 
+import json
+import plistlib
 import re
 import sys
 from pathlib import Path
@@ -179,6 +183,70 @@ def check_file(path: Path) -> list[str]:
     return errors
 
 
+def check_launch_wiring(swift_files: list[Path]) -> list[str]:
+    """校验「一定会创建窗口」的启动链路，防止再次出现启动黑屏。"""
+    errors: list[str] = []
+    rel_plist = "WingControl/Info.plist"
+    plist_path = ROOT / rel_plist
+    try:
+        info = plistlib.loads(plist_path.read_bytes())
+    except Exception as exc:  # noqa: BLE001 - 直接把解析失败报给用户
+        return [f"{rel_plist}: 无法解析（{exc}）"]
+
+    manifest = info.get("UIApplicationSceneManifest") or {}
+    configs = manifest.get("UISceneConfigurations") or {}
+    scenes = configs.get("UIWindowSceneSessionRoleApplication") or []
+    delegates = [
+        item.get("UISceneDelegateClassName")
+        for item in scenes
+        if isinstance(item, dict)
+    ]
+    if "WingControl.SceneDelegate" not in delegates:
+        errors.append(
+            f"{rel_plist}: UISceneConfigurations 缺少 WingControl.SceneDelegate；"
+            "系统只会创建场景不创建窗口，启动后停在黑屏"
+        )
+    if "UILaunchScreen" not in info:
+        errors.append(f"{rel_plist}: 缺少 UILaunchScreen")
+
+    colorset = (
+        ROOT / "WingControl" / "Assets.xcassets"
+        / "LaunchBackground.colorset" / "Contents.json"
+    )
+    try:
+        data = json.loads(colorset.read_text(encoding="utf-8"))
+        comp = data["colors"][0]["color"]["components"]
+        luminance = (
+            0.2126 * float(comp["r"])
+            + 0.7152 * float(comp["g"])
+            + 0.0722 * float(comp["b"])
+        )
+        if luminance < 0.5:
+            errors.append(
+                "LaunchBackground.colorset: 启动屏颜色过暗（亮度 "
+                f"{luminance:.2f}），启动失败时无法与黑屏区分"
+            )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"LaunchBackground.colorset: 校验失败（{exc}）")
+
+    entry = ROOT / "WingControl" / "App" / "WingControlApp.swift"
+    try:
+        entry_src = entry.read_text(encoding="utf-8")
+    except OSError as exc:
+        return errors + [f"启动入口读取失败：{exc}"]
+    for token in ("class SceneDelegate", "makeKeyAndVisible", "UIHostingController"):
+        if token not in entry_src:
+            errors.append(f"App/WingControlApp.swift: 启动入口缺少 {token}")
+
+    mains = sum(
+        mask_strings_and_comments(path.read_text(encoding="utf-8")).count("@main")
+        for path in swift_files
+    )
+    if mains != 1:
+        errors.append(f"Swift 源码里的应用入口有 {mains} 个，必须恰好 1 个")
+    return errors
+
+
 def main() -> int:
     files = sorted(SWIFT_DIR.rglob("*.swift"))
     if not files:
@@ -190,14 +258,15 @@ def main() -> int:
     for path in files:
         errors.extend(check_file(path))
         frames += len(list(find_frame_calls(mask_strings_and_comments(path.read_text(encoding="utf-8")))))
+    errors.extend(check_launch_wiring(files))
 
-    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用")
+    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动链路配置")
     if errors:
         print("\n=== 发现 %d 个问题 ===" % len(errors))
         for err in errors:
             print("ERROR:", err)
         return 1
-    print("Swift 源码静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称）")
+    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路）")
     return 0
 
 
