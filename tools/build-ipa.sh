@@ -20,8 +20,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$ROOT"
+ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${ROOT}"
 
 PROJECT="WingControl.xcodeproj"
 SCHEME="WingControl"
@@ -32,49 +32,49 @@ DISPLAY_NAME="尾翼控制器"
 
 SIGNED=0
 for arg in "$@"; do
-  case "$arg" in
+  case "${arg}" in
     --signed)   SIGNED=1 ;;
     --unsigned) SIGNED=0 ;;
     -h|--help)  sed -n '2,20p' "$0"; exit 0 ;;
-    *) echo "未知参数：$arg（可用：--signed / --unsigned / --help）" >&2; exit 2 ;;
+    *) echo "未知参数: ${arg} (可用: --signed / --unsigned / --help)" >&2; exit 2 ;;
   esac
 done
 
-BUILD_DIR="${IPA_OUTPUT_DIR:-$ROOT/build}"
-ARCHIVE="$BUILD_DIR/$SCHEME.xcarchive"
-IPA_DIR="$BUILD_DIR/ipa"
-STAGE="$BUILD_DIR/stage"
-EXPORT_OPTIONS="$STAGE/ExportOptions.plist"
+BUILD_DIR="${IPA_OUTPUT_DIR:-${ROOT}/build}"
+ARCHIVE="${BUILD_DIR}/${SCHEME}.xcarchive"
+IPA_DIR="${BUILD_DIR}/ipa"
+STAGE="${BUILD_DIR}/stage"
+EXPORT_OPTIONS="${STAGE}/ExportOptions.plist"
 
-echo "==> 工程目录：$ROOT"
-echo "==> 导出模式：$([ "$SIGNED" -eq 1 ] && echo 签名 || echo 免签名)"
+echo "==> 工程目录：${ROOT}"
+echo "==> 导出模式：$([ "${SIGNED}" -eq 1 ] && echo 签名 || echo 免签名)"
 xcodebuild -version
-xcodebuild -list -project "$PROJECT" | sed 's/^/    /'
+xcodebuild -list -project "${PROJECT}" | sed 's/^/    /'
 
 # 每次都做干净构建，避免复用上一次的签名结果
-rm -rf "$ARCHIVE" "$IPA_DIR" "$STAGE"
-mkdir -p "$IPA_DIR" "$STAGE"
+rm -rf "${ARCHIVE}" "${IPA_DIR}" "${STAGE}"
+mkdir -p "${IPA_DIR}" "${STAGE}"
 
 COMMON_ARGS=(
-  -project "$PROJECT"
-  -scheme "$SCHEME"
-  -configuration "$CONFIGURATION"
+  -project "${PROJECT}"
+  -scheme "${SCHEME}"
+  -configuration "${CONFIGURATION}"
   -destination "generic/platform=iOS"
-  -archivePath "$ARCHIVE"
+  -archivePath "${ARCHIVE}"
 )
 
-if [ "$SIGNED" -eq 1 ]; then
+if [ "${SIGNED}" -eq 1 ]; then
   : "${IOS_TEAM_ID:?签名模式必须设置 IOS_TEAM_ID}"
   : "${IOS_PROFILE_UUID:?签名模式必须设置 IOS_PROFILE_UUID}"
   EXPORT_METHOD="${IOS_EXPORT_METHOD:-ad-hoc}"
   SIGN_ARGS=(
-    "DEVELOPMENT_TEAM=$IOS_TEAM_ID"
+    "DEVELOPMENT_TEAM=${IOS_TEAM_ID}"
     "CODE_SIGN_STYLE=Manual"
-    "PROVISIONING_PROFILE_SPECIFIER=$IOS_PROFILE_UUID"
-    "PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID"
+    "PROVISIONING_PROFILE_SPECIFIER=${IOS_PROFILE_UUID}"
+    "PRODUCT_BUNDLE_IDENTIFIER=${BUNDLE_ID}"
   )
   if [ -n "${IOS_SIGNING_IDENTITY:-}" ]; then
-    SIGN_ARGS+=("CODE_SIGN_IDENTITY=$IOS_SIGNING_IDENTITY")
+    SIGN_ARGS+=("CODE_SIGN_IDENTITY=${IOS_SIGNING_IDENTITY}")
   fi
 else
   # CODE_SIGN_STYLE=Manual 是为了压住工程里 Automatic 签名对 Development Team 的检查
@@ -91,72 +91,72 @@ fi
 # 而归档和导出产物都放在 build/ 下；这里已经 rm -rf 归档目录，本身就是干净的。
 echo "==> 开始 archive ..."
 # tee 保留完整日志；pipefail 确保 xcodebuild 失败时整个脚本仍以非零退出
-xcodebuild "${COMMON_ARGS[@]}" "${SIGN_ARGS[@]}" archive 2>&1 | tee "$BUILD_DIR/xcodebuild-archive.log"
+xcodebuild "${COMMON_ARGS[@]}" "${SIGN_ARGS[@]}" archive 2>&1 | tee "${BUILD_DIR}/xcodebuild-archive.log"
 
-APP="$ARCHIVE/Products/Applications/$APP_FILE"
-if [ ! -d "$APP" ]; then
-  echo "归档失败：找不到 $APP" >&2
+APP="${ARCHIVE}/Products/Applications/${APP_FILE}"
+if [ ! -d "${APP}" ]; then
+  echo "归档失败：找不到 ${APP}" >&2
   exit 1
 fi
 
 # 顺带校验应用显示名，避免改名后 CI 打出旧名称的包
-ACTUAL_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist")"
-if [ "$ACTUAL_NAME" != "$DISPLAY_NAME" ]; then
-  echo "应用显示名不符：期望「$DISPLAY_NAME」，实际「$ACTUAL_NAME」" >&2
+ACTUAL_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "${APP}/Info.plist")"
+if [ "${ACTUAL_NAME}" != "${DISPLAY_NAME}" ]; then
+  echo "应用显示名不符: 期望 ${DISPLAY_NAME}, 实际 ${ACTUAL_NAME}" >&2
   exit 1
 fi
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
-BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")"
-echo "==> 显示名校验通过：$ACTUAL_NAME（$VERSION / $BUILD）"
-mkdir -p "$IPA_DIR" "$STAGE"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP}/Info.plist")"
+BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${APP}/Info.plist")"
+echo "==> 显示名校验通过: ${ACTUAL_NAME} (${VERSION} / ${BUILD})"
+mkdir -p "${IPA_DIR}" "${STAGE}"
 
-if [ "$SIGNED" -eq 1 ]; then
-  cat > "$EXPORT_OPTIONS" <<PLIST
+if [ "${SIGNED}" -eq 1 ]; then
+  cat > "${EXPORT_OPTIONS}" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>method</key>
-  <string>$EXPORT_METHOD</string>
+  <string>${EXPORT_METHOD}</string>
   <key>teamID</key>
-  <string>$IOS_TEAM_ID</string>
+  <string>${IOS_TEAM_ID}</string>
   <key>signingStyle</key>
   <string>manual</string>
   <key>provisioningProfiles</key>
   <dict>
-    <key>$BUNDLE_ID</key>
-    <string>$IOS_PROFILE_UUID</string>
+    <key>${BUNDLE_ID}</key>
+    <string>${IOS_PROFILE_UUID}</string>
   </dict>
   <key>stripSwiftSymbols</key>
   <true/>
 </dict>
 </plist>
 PLIST
-  echo "==> 导出签名 IPA（method=$EXPORT_METHOD）..."
+  echo "==> 导出签名 IPA (method=${EXPORT_METHOD}) ..."
   xcodebuild -exportArchive \
-    -archivePath "$ARCHIVE" \
-    -exportPath "$IPA_DIR" \
-    -exportOptionsPlist "$EXPORT_OPTIONS" 2>&1 | tee "$BUILD_DIR/xcodebuild-export.log"
-  EXPORTED="$(find "$IPA_DIR" -maxdepth 1 -name '*.ipa' -print -quit)"
-  if [ -z "$EXPORTED" ]; then
+    -archivePath "${ARCHIVE}" \
+    -exportPath "${IPA_DIR}" \
+    -exportOptionsPlist "${EXPORT_OPTIONS}" 2>&1 | tee "${BUILD_DIR}/xcodebuild-export.log"
+  EXPORTED="$(find "${IPA_DIR}" -maxdepth 1 -name '*.ipa' -print -quit)"
+  if [ -z "${EXPORTED}" ]; then
     echo "exportArchive 未产出 IPA" >&2
     exit 1
   fi
-  IPA="$IPA_DIR/WingControl-signed.ipa"
-  if [ "$EXPORTED" != "$IPA" ]; then mv "$EXPORTED" "$IPA"; fi
+  IPA="${IPA_DIR}/WingControl-signed.ipa"
+  if [ "${EXPORTED}" != "${IPA}" ]; then mv "${EXPORTED}" "${IPA}"; fi
 else
   echo "==> 打包免签名 IPA ..."
-  cp -R "$APP" "$STAGE/Payload"
-  IPA="$IPA_DIR/WingControl-unsigned.ipa"
-  (cd "$STAGE" && zip -qry "$IPA" Payload)
+  cp -R "${APP}" "${STAGE}/Payload"
+  IPA="${IPA_DIR}/WingControl-unsigned.ipa"
+  (cd "${STAGE}" && zip -qry "${IPA}" Payload)
 fi
 
-if [ ! -f "$IPA" ]; then
-  echo "IPA 未生成：$IPA" >&2
+if [ ! -f "${IPA}" ]; then
+  echo "IPA 未生成：${IPA}" >&2
   exit 1
 fi
 
-echo "==> 产物：$IPA"
-echo "==> 大小：$(du -h "$IPA" | cut -f1)"
-echo "==> SHA256：$(shasum -a 256 "$IPA" | cut -d' ' -f1)"
-unzip -l "$IPA" | grep -m 1 'Payload/' || true
+echo "==> 产物：${IPA}"
+echo "==> 大小：$(du -h "${IPA}" | cut -f1)"
+echo "==> SHA256：$(shasum -a 256 "${IPA}" | cut -d' ' -f1)"
+unzip -l "${IPA}" | grep -m 1 'Payload/' || true
