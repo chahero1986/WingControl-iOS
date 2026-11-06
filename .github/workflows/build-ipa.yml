@@ -49,6 +49,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  LANG: en_US.UTF-8
+  LC_ALL: en_US.UTF-8
   PROJECT: WingControl.xcodeproj
   SCHEME: WingControl
   REQUESTED_SIGN_MODE: ${{ github.event.inputs.sign_mode || 'auto' }}
@@ -74,12 +76,12 @@ jobs:
       - name: 确认 Xcode 与共享 Scheme
         run: |
           set -euo pipefail
-          echo "runner：$RUNNER_OS / $RUNNER_ARCH / $RUNNER_NAME"
+          echo "runner: ${RUNNER_OS} / ${RUNNER_ARCH} / ${RUNNER_NAME}"
           xcode-select -p
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           test -f "WingControl.xcodeproj/xcshareddata/xcschemes/WingControl.xcscheme"
-          xcodebuild -list -project "$PROJECT"
+          xcodebuild -list -project "${PROJECT}"
 
       - name: 决定签名方式
         id: mode
@@ -91,29 +93,29 @@ jobs:
              && [ -n "${PROFILE_BASE64:-}" ] && [ -n "${IOS_TEAM_ID:-}" ]; then
             has_material=1
           fi
-          echo "签名材料齐备：$has_material；请求模式：${REQUESTED_SIGN_MODE:-auto}"
+          echo "签名材料齐备: ${has_material} / 请求模式: ${REQUESTED_SIGN_MODE:-auto}"
 
           case "${REQUESTED_SIGN_MODE:-auto}" in
             unsigned) signed=0 ;;
             signed)
-              if [ "$has_material" -eq 0 ]; then
+              if [ "${has_material}" -eq 0 ]; then
                 echo "::error::缺少签名材料，请在仓库 Settings → Secrets 配置 IOS_P12_BASE64 / IOS_P12_PASSWORD / IOS_MOBILEPROVISION_BASE64 / IOS_TEAM_ID"
                 exit 1
               fi
               signed=1
               ;;
-            *) signed=$has_material ;;
+            *) signed=${has_material} ;;
           esac
 
-          if [ "$signed" -eq 1 ]; then
-            echo "signed=1" >> "$GITHUB_OUTPUT"
-            echo "ipa=build/ipa/WingControl-signed.ipa" >> "$GITHUB_OUTPUT"
-            echo "artifact=WingControl-signed-IPA" >> "$GITHUB_OUTPUT"
+          if [ "${signed}" -eq 1 ]; then
+            echo "signed=1" >> "${GITHUB_OUTPUT}"
+            echo "ipa=build/ipa/WingControl-signed.ipa" >> "${GITHUB_OUTPUT}"
+            echo "artifact=WingControl-signed-IPA" >> "${GITHUB_OUTPUT}"
             echo "::notice::本次产出【已签名】IPA"
           else
-            echo "signed=0" >> "$GITHUB_OUTPUT"
-            echo "ipa=build/ipa/WingControl-unsigned.ipa" >> "$GITHUB_OUTPUT"
-            echo "artifact=WingControl-unsigned-IPA" >> "$GITHUB_OUTPUT"
+            echo "signed=0" >> "${GITHUB_OUTPUT}"
+            echo "ipa=build/ipa/WingControl-unsigned.ipa" >> "${GITHUB_OUTPUT}"
+            echo "artifact=WingControl-unsigned-IPA" >> "${GITHUB_OUTPUT}"
             echo "::notice::本次产出【免签名】IPA，可用 AltStore / Sideloadly / TrollStore 侧载"
           fi
 
@@ -123,48 +125,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          WORK="$RUNNER_TEMP/wing-signing"
-          rm -rf "$WORK"
-          mkdir -p "$WORK" "$HOME/Library/MobileDevice/Provisioning Profiles"
+          WORK="${RUNNER_TEMP}/wing-signing"
+          rm -rf "${WORK}"
+          mkdir -p "${WORK}" "${HOME}/Library/MobileDevice/Provisioning Profiles"
 
           # 兼容 macOS BSD base64(-D) 与 GNU base64(-d)，并容忍 Secret 中的换行/空格
           b64decode() {
             local payload="$1" dest="$2"
-            printf '%s' "$payload" | tr -d '\r\n\t ' | base64 -D > "$dest" 2>/dev/null \
-              || printf '%s' "$payload" | tr -d '\r\n\t ' | base64 -d > "$dest"
-            test -s "$dest"
+            printf '%s' "${payload}" | tr -d '\r\n\t ' | base64 -D > "${dest}" 2>/dev/null \
+              || printf '%s' "${payload}" | tr -d '\r\n\t ' | base64 -d > "${dest}"
+            test -s "${dest}"
           }
-          b64decode "$P12_BASE64" "$WORK/cert.p12"
-          b64decode "$PROFILE_BASE64" "$WORK/profile.mobileprovision"
+          b64decode "${P12_BASE64}" "${WORK}/cert.p12"
+          b64decode "${PROFILE_BASE64}" "${WORK}/profile.mobileprovision"
 
           # 解析描述文件，取 UUID 与名称
-          security cms -D -i "$WORK/profile.mobileprovision" > "$WORK/profile.plist"
-          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$WORK/profile.plist")"
-          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$WORK/profile.plist")"
-          echo "描述文件：$PROFILE_NAME（$PROFILE_UUID）"
-          cp "$WORK/profile.mobileprovision" \
-             "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          security cms -D -i "${WORK}/profile.mobileprovision" > "${WORK}/profile.plist"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "${WORK}/profile.plist")"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "${WORK}/profile.plist")"
+          echo "描述文件: ${PROFILE_NAME} (${PROFILE_UUID})"
+          cp "${WORK}/profile.mobileprovision" \
+             "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
 
           # 建临时钥匙串，导入 P12，放开 codesign 对私钥的访问
-          KEYCHAIN="$WORK/build.keychain-db"
+          KEYCHAIN="${WORK}/build.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$WORK/cert.p12" -P "$P12_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security import "${WORK}/cert.p12" -P "${P12_PASSWORD}" \
+            -A -t cert -f pkcs12 -k "${KEYCHAIN}"
           security set-key-partition-list -S apple-tool:,apple: -s \
-            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null || true
-          LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
-          if [ -f "$LOGIN_KEYCHAIN" ]; then
-            security list-keychains -d user -s "$KEYCHAIN" "$LOGIN_KEYCHAIN"
+            -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" >/dev/null || true
+          LOGIN_KEYCHAIN="${HOME}/Library/Keychains/login.keychain-db"
+          if [ -f "${LOGIN_KEYCHAIN}" ]; then
+            security list-keychains -d user -s "${KEYCHAIN}" "${LOGIN_KEYCHAIN}"
           else
-            security list-keychains -d user -s "$KEYCHAIN"
+            security list-keychains -d user -s "${KEYCHAIN}"
           fi
-          security default-keychain -s "$KEYCHAIN"
-          security find-identity -v -p codesigning "$KEYCHAIN"
+          security default-keychain -s "${KEYCHAIN}"
+          security find-identity -v -p codesigning "${KEYCHAIN}"
 
-          echo "profile_uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
+          echo "profile_uuid=${PROFILE_UUID}" >> "${GITHUB_OUTPUT}"
 
       - name: 归档并导出 IPA
         env:
@@ -183,13 +185,13 @@ jobs:
         run: |
           set -euo pipefail
           IPA="${{ steps.mode.outputs.ipa }}"
-          test -f "$IPA"
-          unzip -t "$IPA" | tail -n 2
+          test -f "${IPA}"
+          unzip -t "${IPA}" | tail -n 2
           APP="build/WingControl.xcarchive/Products/Applications/WingControl.app"
-          echo "应用显示名：$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Info.plist")"
-          echo "Bundle ID：$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")"
+          echo "应用显示名: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "${APP}/Info.plist")"
+          echo "Bundle ID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Info.plist")"
           if [ "${{ steps.mode.outputs.signed }}" = "1" ]; then
-            codesign -dv --verbose=2 "$APP" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Signature=' || true
+            codesign -dv --verbose=2 "${APP}" 2>&1 | grep -E 'Identifier=|TeamIdentifier=|Signature=' || true
           fi
           {
             echo "### IPA 构建完成"
@@ -197,10 +199,10 @@ jobs:
             echo "| 项 | 值 |"
             echo "| --- | --- |"
             echo "| 签名 | $([ "${{ steps.mode.outputs.signed }}" = "1" ] && echo 已签名 || echo 免签名) |"
-            echo "| 文件 | \`$IPA\` |"
-            echo "| 大小 | $(du -h "$IPA" | cut -f1) |"
-            echo "| SHA256 | \`$(shasum -a 256 "$IPA" | cut -d' ' -f1)\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "| 文件 | \`${IPA}\` |"
+            echo "| 大小 | $(du -h "${IPA}" | cut -f1) |"
+            echo "| SHA256 | \`$(shasum -a 256 "${IPA}" | cut -d' ' -f1)\` |"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: 上传 IPA 工件
         uses: actions/upload-artifact@v4
@@ -218,9 +220,9 @@ jobs:
         run: |
           set -euo pipefail
           IPA="${{ steps.mode.outputs.ipa }}"
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" "$IPA" --clobber
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" "${IPA}" --clobber
 
       - name: 上传构建日志（失败时）
         if: failure()
