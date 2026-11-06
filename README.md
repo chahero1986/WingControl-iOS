@@ -100,6 +100,8 @@ bash tools/build-ipa.sh                # 免签名 → build/ipa/WingControl-uns
 bash tools/build-ipa.sh --signed       # 需先设置 IOS_TEAM_ID / IOS_PROFILE_UUID
 ```
 
+> **维护约定**：workflow 与脚本中的 shell 变量一律写成 `${VAR}`，且工作流显式设置 `LANG/LC_ALL=en_US.UTF-8`。macOS 自带的 bash 3.2 在 `set -u` 下会把变量名后紧跟的中文标点字节吞进变量名，写成 `$VAR；` 会报 `unbound variable`；花括号能彻底划定边界。
+
 ---
 
 ## 3. 目录结构
