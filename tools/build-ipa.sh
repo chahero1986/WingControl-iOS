@@ -90,7 +90,8 @@ fi
 # 不用 `xcodebuild clean`：Xcode 的 clean 会删掉 SYMROOT（默认就是 build/），
 # 而归档和导出产物都放在 build/ 下；这里已经 rm -rf 归档目录，本身就是干净的。
 echo "==> 开始 archive ..."
-xcodebuild "${COMMON_ARGS[@]}" "${SIGN_ARGS[@]}" archive
+# tee 保留完整日志；pipefail 确保 xcodebuild 失败时整个脚本仍以非零退出
+xcodebuild "${COMMON_ARGS[@]}" "${SIGN_ARGS[@]}" archive 2>&1 | tee "$BUILD_DIR/xcodebuild-archive.log"
 
 APP="$ARCHIVE/Products/Applications/$APP_FILE"
 if [ ! -d "$APP" ]; then
@@ -135,7 +136,7 @@ PLIST
   xcodebuild -exportArchive \
     -archivePath "$ARCHIVE" \
     -exportPath "$IPA_DIR" \
-    -exportOptionsPlist "$EXPORT_OPTIONS"
+    -exportOptionsPlist "$EXPORT_OPTIONS" 2>&1 | tee "$BUILD_DIR/xcodebuild-export.log"
   EXPORTED="$(find "$IPA_DIR" -maxdepth 1 -name '*.ipa' -print -quit)"
   if [ -z "$EXPORTED" ]; then
     echo "exportArchive 未产出 IPA" >&2

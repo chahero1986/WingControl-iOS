@@ -37,10 +37,24 @@
 | 事件 | 结果 |
 | --- | --- |
 | push 到 `main` / `master`、Pull Request | 构建并上传 IPA 到 Actions 工件 |
-| Actions → 「构建 IPA」→ Run workflow | 可手动选 `sign_mode`、`export_method` |
+| Actions → 「构建 IPA」→ Run workflow | 可手动选 `runner`、`sign_mode`、`export_method` |
 | push `v*` 标签（如 `v1.0.0`） | 额外创建 GitHub Release 并附上 IPA |
 
 默认 `sign_mode = auto`：**不配置任何 Secrets 也能跑**，产出免签名 IPA，不需要 Apple 开发者账号；4 个 Secrets 配齐后自动升级为签名 IPA。
+
+### Runner 镜像
+
+工作流默认固定在 **`macos-15`**（arm64，Xcode 16.x）。GitHub 的 `macos-14` 镜像已于 **2026-11-02 退役**，继续用会直接报 `The configuration 'macos-14-arm64-us-default' is not supported`，job 连机器都分配不到——这与工程代码无关。
+
+手动运行时可在 `runner` 下拉框切换：
+
+| 选项 | 说明 |
+| --- | --- |
+| `macos-15`（默认） | arm64，Xcode 16.x，版本跨度最小 |
+| `macos-latest` | 目前指向 macOS 26，Xcode 跨度较大 |
+| `macos-15-intel` | x86_64，仅在确实需要 Intel 环境时选 |
+
+push / PR / tag 触发的构建固定用 `macos-15`；若将来该标签也退役，改 `build-ipa.yml` 中 `runs-on` 的默认值即可。私有仓库会按 macOS 分钟额度计费（倍率高于 Linux）。
 
 ### 两种产物
 
@@ -75,6 +89,8 @@ Windows 上可用 `certutil -encode cert.p12 cert.b64`，再去掉首尾的 `---
 > 手动运行时的 `export_method` 可选 `ad-hoc`（默认）/ `development` / `app-store` / `enterprise`。
 
 工作流不依赖任何第三方 Action，只用官方 `actions/checkout`、`actions/upload-artifact` 与 runner 自带的 `gh`；证书只写入 `RUNNER_TEMP` 下的临时钥匙串，任务结束即销毁。
+
+构建日志 `build/xcodebuild-archive.log` / `xcodebuild-export.log` 会实时打印到 Actions 日志；**任一环节失败时**还会作为 `build-log-<run number>` 工件上传，首次编译排错可直接下载。
 
 ### 本地构建（macOS）
 
