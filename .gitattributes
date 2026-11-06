@@ -1,0 +1,23 @@
+# GitHub Actions 在 macOS (bash 3.2) 上执行这些脚本，CRLF 会把 \r 带进命令，
+# 因此所有文本在仓库中一律以 LF 存储；Windows checkout 也不做转换。
+* text=auto eol=lf
+
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.py        text eol=lf
+*.swift     text eol=lf
+*.pbxproj   text eol=lf
+*.xcscheme  text eol=lf
+*.plist     text eol=lf
+*.md        text eol=lf
+*.html      text eol=lf
+
+# 资源与产物是二进制，禁止任何换行/编码转换
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ipa       binary
+*.p12       binary
+*.mobileprovision binary
