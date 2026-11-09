@@ -294,6 +294,12 @@ struct WingTestPanel: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.sm) {
+                    if runner.interruptedReason != nil {
+                        disconnectBanner
+                    } else if !controller.isConnected {
+                        connectionBanner
+                    }
+                    writeReceiptCard
                     headerCard
                     controlCard
                     resultCard
@@ -317,6 +323,111 @@ struct WingTestPanel: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    // MARK: 断开与写入回执
+
+    /// 断开提示同时用图标与文字，不只依赖颜色；并给出明确的恢复路径。
+    private var disconnectBanner: some View {
+        HStack(alignment: .top, spacing: Spacing.xs) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.wingAccent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("⚠️ 蓝牙已断开，测试已停止")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.white)
+                Text(runner.interruptedReason ?? "后续指令已全部取消")
+                    .font(.caption)
+                    .foregroundStyle(Color.wingTextSecondary)
+                Text("回到设备页重新连接后，点「继续」可接着跑，或重新「开始标准矩阵」。")
+                    .font(.caption)
+                    .foregroundStyle(Color.wingTextSecondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.wingSurfaceAlt,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.wingAccent, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    /// 未连接时明确告知「指令不会发出去」，避免以为测试在跑、只是尾翼没动。
+    private var connectionBanner: some View {
+        HStack(alignment: .top, spacing: Spacing.xs) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(Color.wingAccent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("蓝牙未连接，指令不会发送")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.white)
+                Text("当前状态：\(controller.connectionText)。请回到设备页连接 JDY 设备，确认显示「已连接」后再开始测试。")
+                    .font(.caption)
+                    .foregroundStyle(Color.wingTextSecondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.wingSurfaceAlt,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.wingBorder, lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    /// 把 ATT 回执直接摆到面板上：之前「命令已写入」只是无响应写提交成功，
+    /// 并不代表设备收到。带响应写才有回执，错误码能判断是否需要配对。
+    private var writeReceiptCard: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            HStack(spacing: Spacing.xs) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .foregroundStyle(Color.wingAccent)
+                    .accessibilityHidden(true)
+                Text("写入回执（指令有没有送达）")
+                    .font(.headline)
+                    .foregroundStyle(Color.white)
+                Spacer(minLength: 0)
+            }
+            Text(controller.ble.lastWriteStatus)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(controller.ble.writeFailureCount > 0 ? Color.wingAccent : Color.white)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("尝试 \(controller.ble.writeAttemptCount) 次 · ATT 成功 \(controller.ble.writeAckCount) 次 · 失败 \(controller.ble.writeFailureCount) 次 · \(controller.ble.writeLengthInfo)")
+                .font(.caption)
+                .foregroundStyle(Color.wingTextSecondary)
+            Text("特征值：\(controller.ble.allCharacteristicInfo)")
+                .font(.caption2.monospaced())
+                .foregroundStyle(Color.wingTextSecondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("无响应写没有 ATT 回执；出现「ATT 写入失败 · code=」说明蓝牙层就没送达，请把这段字连同 code 一起发回。")
+                .font(.caption2)
+                .foregroundStyle(Color.wingTextSecondary)
+        }
+        .padding(Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.wingSurface,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.wingBorder, lineWidth: 1)
+        )
     }
 
     // MARK: 当前编号卡片
@@ -395,6 +506,10 @@ struct WingTestPanel: View {
             Text("运行控制")
                 .font(.headline)
                 .foregroundStyle(Color.white)
+            actionButton("原样复刻小程序 · 一键上升", filled: true) { runner.probeOriginal() }
+            actionButton("读取全部可读特征值（触发配对）", filled: false) {
+                controller.ble.readAllReadableCharacteristics()
+            }
             HStack(spacing: Spacing.xs) {
                 actionButton("开始标准矩阵", filled: true) { runner.start(mode: .standard) }
                 actionButton("did 全扫描", filled: false) { runner.start(mode: .didScan) }
@@ -543,7 +658,7 @@ struct WingTestPanel: View {
             Text("怎么记结果")
                 .font(.headline)
                 .foregroundStyle(Color.white)
-            Text("1. 先关闭「演示模式」并连上蓝牙，站在能看到尾翼的位置。\n2. 点「开始标准矩阵」，界面每约 2 秒换一个编号（#1、#2……）。\n3. 看到尾翼动了，立刻点「这个编号有效」，或把编号记在纸上。\n4. 跑完点「复制测试报告」粘贴发我，报告含每项的帧、写入通道与自动判定。\n5. 标准矩阵全无效时，再跑「did 全扫描」：0x00~0xFF 逐个试，约 3 分钟。")
+            Text("1. 先关闭「演示模式」并连上蓝牙，站在能看到尾翼的位置。\n2. 先点「原样复刻小程序」试一次：这一帧与小程序完全一致，用来判断是不是连接 / 配对层的问题。\n3. 点「开始标准矩阵」，界面每约 2 秒换一个编号（#1、#2……）。\n4. 看到尾翼动了，立刻点「这个编号有效」，或把编号记在纸上。\n5. 跑完点「复制测试报告」粘贴发我，报告含每项的帧、写入通道、ATT 回执与失败码。\n6. 全无效时再跑「did 全扫描」：0x00~0xFF 逐个试，约 3 分钟。\n7. 蓝牙断开会自动停止并弹出提示条，重新连接后点「继续」可接着跑。")
                 .font(.caption)
                 .foregroundStyle(Color.wingTextSecondary)
             Text("注意：状态帧未变化不等于一定失败，最终以你亲眼看到尾翼动作的编号为准。")

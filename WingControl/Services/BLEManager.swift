@@ -77,6 +77,15 @@ final class BLEManager: NSObject, ObservableObject {
     @Published private(set) var writeTargets: [BLEWriteTarget] = []
     /// 所有主服务下的特征值清单（UUID + 属性），便于截图排查
     @Published private(set) var allCharacteristicInfo: String = "—"
+    /// 写入回执：`.withoutResponse` 没有 ATT 回执，只有 `.withResponse` 会在
+    /// `didWriteValueFor` 返回成功或失败。把结果暴露到界面，才能区分
+    /// 「指令根本没送达蓝牙层」与「设备收到了但不执行」。
+    @Published private(set) var lastWriteStatus: String = "—"
+    @Published private(set) var writeAttemptCount = 0
+    @Published private(set) var writeAckCount = 0
+    @Published private(set) var writeFailureCount = 0
+    /// 当前协商出的单次写入长度上限，排查「帧太长被截断」
+    @Published private(set) var writeLengthInfo: String = "—"
 
     /// 收到 notify 数据、断开连接、日志文本的回调（均由主线程触发）
     var onData: ((Data) -> Void)?
@@ -303,10 +312,14 @@ final class BLEManager: NSObject, ObservableObject {
     /// 微信小程序在 iOS 上对同时支持两种写的特征值走「无响应写」；
     /// 部分 JDY 模块固件也只按无响应写透传。这里做成可切换，并回退到特征值实际支持的模式。
     func write(_ data: Data, withoutResponse: Bool = true, targetUUID: String? = nil) {
+        writeAttemptCount += 1
         guard let peripheral = peripheral,
               let characteristic = characteristic(forUUID: targetUUID),
               peripheral.state == .connected else {
             let targetName = targetUUID ?? "默认"
+            let message = "失败：设备未连接或特征值不可用（目标 \(targetName)）"
+            lastWriteStatus = message
+            writeFailureCount += 1
             onLog?("发送命令失败：设备未连接或特征值不可用（目标 \(targetName)）")
             return
         }
@@ -320,13 +333,22 @@ final class BLEManager: NSObject, ObservableObject {
         } else if supportsFast {
             type = .withoutResponse
         } else {
-            onLog?("发送命令失败：特征值 \(characteristic.uuid.uuidString) 不支持写入")
+            let message = "失败：特征值 \(characteristic.uuid.uuidString) 不支持写入"
+            lastWriteStatus = message
+            writeFailureCount += 1
+            onLog?(message)
             return
         }
 
         peripheral.writeValue(data, for: characteristic, type: type)
         let mode = type == .withResponse ? "带响应写" : "无响应写"
         let channel = targetUUID == nil ? "默认" : "指定"
+        let short = String(characteristic.uuid.uuidString.prefix(8))
+        if type == .withoutResponse {
+            lastWriteStatus = "已提交 · \(short) · \(channel) · 无响应写（无 ATT 回执，无法确认设备是否收到）"
+        } else {
+            lastWriteStatus = "已提交 · \(short) · \(channel) · 带响应写 · 等待 ATT 回执"
+        }
         onLog?("写入特征值 \(characteristic.uuid.uuidString) · \(channel) · \(mode) · \(WingProtocol.hexString(data))")
         // 无响应写不会触发 didWriteValueFor，日志里需要显式说明，避免被误判为「没发出去」
         if type == .withoutResponse {
@@ -362,6 +384,25 @@ final class BLEManager: NSObject, ObservableObject {
             self.peripheral?.setNotifyValue(true, for: notify)
         }
     }
+
+    /// 读取全部可读特征值：部分 JDY 固件要求先 read 才允许写，或需要 read 触发
+    /// 系统配对。失败时 `didUpdateValueFor` 会给出 insufficientEncryption /
+    /// insufficientAuthentication 之类错误码，能直接定位「写入被设备拒绝」。
+    func readAllReadableCharacteristics() {
+        guard let peripheral = peripheral, peripheral.state == .connected else {
+            onLog?("读取失败：蓝牙未连接")
+            return
+        }
+        let readable = discoveredCharacteristics.filter { $0.properties.contains(.read) }
+        guard !readable.isEmpty else {
+            onLog?("该设备没有可读特征值（不影响写入测试）")
+            return
+        }
+        onLog?("读取 \(readable.count) 个可读特征值，用于触发配对 / 固件握手")
+        for item in readable {
+            peripheral.readValue(for: item)
+        }
+    }
 }
 
 // MARK: - CBCentralManagerDelegate
@@ -388,6 +429,8 @@ extension BLEManager: CBCentralManagerDelegate {
             pendingAction = nil
             phase = .failed(unavailableMessage)
             onLog?(unavailableMessage)
+            // 蓝牙开关关闭 / 权限被收回同样要让测试立刻停机，不能只靠下一步轮询
+            onDisconnect?()
         case .resetting:
             onLog?("蓝牙正在重置，请稍后重试")
         default:
@@ -512,7 +555,11 @@ extension BLEManager: CBPeripheralDelegate {
         }
         guard characteristic.isNotifying else { return }
         phase = .ready
+        let ackLength = peripheral.maximumWriteValueLength(for: .withResponse)
+        let nrLength = peripheral.maximumWriteValueLength(for: .withoutResponse)
+        writeLengthInfo = "带响应 \(ackLength) 字节 / 无响应 \(nrLength) 字节"
         onLog?("notify 启动成功，特征值 \(characteristic.uuid.uuidString)")
+        onLog?("单次写入长度上限：\(writeLengthInfo)")
     }
 
     func peripheral(
@@ -520,8 +567,17 @@ extension BLEManager: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        guard error == nil, let value = characteristic.value, !value.isEmpty else { return }
-        onData?(value)
+        if let error = error {
+            let code = (error as NSError).code
+            onLog?("特征值读取 / 通知失败：\(characteristic.uuid.uuidString) · code=\(code) · \(error.localizedDescription)")
+            return
+        }
+        guard let value = characteristic.value, !value.isEmpty else { return }
+        if characteristic.isNotifying {
+            onData?(value)
+        } else {
+            onLog?("读取特征值 \(characteristic.uuid.uuidString) ← \(WingProtocol.hexString(value))")
+        }
     }
 
     func peripheral(
@@ -529,7 +585,18 @@ extension BLEManager: CBPeripheralDelegate {
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        if let error = error { onLog?("发送命令失败：\(error.localizedDescription)") }
-        else { onLog?("发送命令成功（设备已确认写入）") }
+        let short = String(characteristic.uuid.uuidString.prefix(8))
+        if let error = error {
+            let code = (error as NSError).code
+            let message = "ATT 写入失败 · \(short) · code=\(code) · \(error.localizedDescription)"
+            lastWriteStatus = message
+            writeFailureCount += 1
+            onLog?(message)
+        } else {
+            let message = "ATT 写入成功 · \(short) · 设备已确认"
+            lastWriteStatus = message
+            writeAckCount += 1
+            onLog?(message)
+        }
     }
 }

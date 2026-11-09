@@ -109,7 +109,7 @@ python tools/verify_swift_sources.py     # Swift 源码静态检查
 python tools/verify_protocol.py          # 协议帧与校验规则
 ```
 
-`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）、**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）、**文字对比度**（禁止裸系统语义色、提示框必须自定义、分组标题与两行重发按钮必须有确定颜色）和**一键测试矩阵**（入口、运行器、编号、报告、特征值枚举）、**可选链遮蔽**（`guard let` 解包后同作用域不得再写 `x?.`）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
+`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）、**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）、**文字对比度**（禁止裸系统语义色、提示框必须自定义、分组标题与两行重发按钮必须有确定颜色）和**一键测试矩阵**（入口、运行器、编号、报告、特征值枚举）、**可选链遮蔽**（`guard let` 解包后同作用域不得再写 `x?.`）、**断线守卫与写入回执**（断开停机、每步检查连接、ATT 错误码可见）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
 
 首次真实编译（Xcode 16.4 / macOS 15 runner）报过 `DailyModeView.swift:42: extra argument 'minHeight' in call`：SwiftUI 的 `frame` 有两个重载——`frame(width:height:alignment:)` 与 `frame(minWidth:…:maxHeight:alignment:)`——`width`/`height` 不能和 `min*`/`max*` 同用。现在统一改为 `.frame(minWidth: 44, minHeight: 44)`，既合法又能随 Dynamic Type 放大。
 
@@ -125,6 +125,7 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 > 9. 界面固定深色：不要删 `UIUserInterfaceStyle=Dark` 与 `.preferredColorScheme(.dark)`，不要把底部栏改回系统 `TabView`、不要把选中按钮改回纯 `.accentColor`、不要恢复赛道演示动画或旧 `Image("Logo")`——这些都会让「选中看不见 / 背景不协调」复发（静态预检会拦截）；
 > 10. 所有文字显式着色：禁止裸 `.foregroundStyle(.secondary)` / `.tertiary` / `.primary`，提示框必须用 `WingAlertOverlay` 而不是系统 `.alert`，List 行要有 `.listRowBackground(Color.wingSurface)`、分组标题要有显式颜色的 `sectionHeader()`。改回系统语义色会让弹窗按钮、分组标题和两行重发按钮变成「按钮在、字是空白」（静态预检会拦截）。
 > 11. `guard let x = ...` 之后 `x` 已是非可选，同作用域内不能写 `x?.foo()`（会报 `cannot use optional chaining on non-optional value`）。可选属性请写成 `self.x?.foo()`，或在 `WingTestRunner` 里统一用不与局部绑定同名的 `owner`（静态预检会拦截）。
+> 12. 测试运行器必须每步检查 `isConnected`、把 `ble.onDisconnect` 转发成停机，并把 ATT 写入回执显示到面板。`.withoutResponse` 写不会回调 `didWriteValueFor`，日志里的「命令已写入」只代表提交成功，不代表设备收到（静态预检会拦截）。
 
 ### 启动黑屏的修复说明
 
@@ -295,6 +296,35 @@ WingController.swift:721:19: error: cannot use optional chaining on non-optional
 修复：`WingTestRunner` 的弱引用属性由 `controller` 改名为 `owner`，所有 `guard let controller = owner` 保持不变，对可选属性的调用统一改成 `owner?.`；局部非可选 `controller` 只用于直接调用（`controller.buildTestCases(...)` 等）。语义不变，且不再有同名遮蔽。
 
 同时在 `tools/verify_swift_sources.py` 新增 `check_optional_chaining_shadowing()`：按花括号配对定位每个 `guard let` 所在代码块，检查同作用域里是否出现对该局部绑定的裸 `x?.`（`self.x?.` 属合法属性访问，会排除）。本机 Windows 无 `swiftc`，这类编译期错误现在能在 push 之前拦住。
+
+### 断线守卫与写入回执（2026-11-09 第五轮）
+
+真机反馈：标准矩阵与 did 全扫描跑完尾翼都没动作；且测试期间蓝牙断开后编号仍在推进、指令仍在发送，没有任何提示。
+
+复查原小程序 `onBLEConnectionStateChange`：它在断开时会弹「蓝牙已断开,现在去重新连接」并停止操作。App 这边有三个缺口：
+
+1. `ble.onDisconnect` 只重置状态，没有转发给 `WingTestRunner`；
+2. `sendTestFrames` 把写入排进 `DispatchWorkItem` 之后不再检查连接；
+3. 标准矩阵默认 `.withoutResponse`——**无响应写没有 ATT 回执**，日志里的「命令已写入（无响应写）」只代表 CoreBluetooth 接受了该次提交，设备是否收到完全无从得知。
+
+第 3 点尤其关键：「两组矩阵全无反馈」未必是帧内容不对，也可能写入在蓝牙层就被拒绝（例如设备要求配对，`insufficientEncryption` / `insufficientAuthentication`）。这类错误在 `.withoutResponse` 下不会回调，之前所有日志都看不到。
+
+| 文件 | 改动 |
+| --- | --- |
+| `Services/BLEManager.swift` | `lastWriteStatus` / 尝试·成功·失败计数；`didWriteValueFor` 记录 ATT 错误码；蓝牙关闭与权限收回也发断开事件；`writeLengthInfo` 记录单次写入长度上限；`readAllReadableCharacteristics()` 读取可读特征值以触发配对 / 固件握手 |
+| `Services/WingController.swift` | 断开事件转发 `testRunner.handleDisconnect()`；排队写入前再次检查连接；`sendOriginalProbe()` 严格复刻小程序单次发送；`WingTestRunner` 每步检查连接、停机、记录 `interruptedReason`；标准矩阵默认改为**带响应写**；报告加入回执统计、特征值清单、写入长度与中断原因 |
+| `Views/DeviceView.swift` | 面板新增「写入回执」卡片（最后一次回执 + 失败计数 + 完整特征值清单）、断开提示条、未连接提示条；新增「原样复刻小程序 · 一键上升」「读取全部可读特征值」两个按钮 |
+| `tools/verify_swift_sources.py` | 新增 `check_connection_guard()` 防回退检查 |
+
+**新的排查顺序（请先做第 1 步）**
+
+1. 连上蓝牙后，先点 **「原样复刻小程序 · 一键上升」**：用默认通道、带响应写、设备回传的 did，发与小程序完全一致的 `BB{did}80060100`。面板顶部「写入回执」会立刻给出结果。
+2. 若显示 `ATT 写入失败 · code=N`：把这一段（含 code）连同报告发回。`code=5`（认证不足）或 `code=15`（加密不足）说明设备要求配对——重启尾翼控制器、在「设置 → 蓝牙」忽略该设备后重新连接，出现配对弹窗时允许，再点「读取全部可读特征值（触发配对）」复验。
+3. 若显示 `已提交 · … 无响应写（无 ATT 回执）`：说明这次没走带响应写，改点「开始标准矩阵」（默认带响应写）再试。
+4. 若显示 `失败：设备未连接或特征值不可用`：先重新连接，并核对回执卡片里的完整特征值清单。
+5. 只有在这一帧确实显示 `ATT 写入成功`、尾翼却仍不动时，才继续跑标准矩阵 / did 全扫描——此时才说明是协议或 did 的问题。
+
+断开后：`handleDisconnect()` 会取消排队写入、停止编号推进，面板顶部显示橙色提示条（图标 + 文字，不只靠颜色），报告里记录「第 #N 项断开」。回到设备页重新连接后点「继续」可接着跑；未连接时面板直接显示「蓝牙未连接，指令不会发送」。
 
 ---
 

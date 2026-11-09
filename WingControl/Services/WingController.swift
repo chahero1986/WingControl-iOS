@@ -84,6 +84,8 @@ final class WingController: ObservableObject {
             self.replyCheckWorkItem?.cancel()
             self.awaitingReply = false
             self.appendLog("设备断开，等待重新连接")
+            // 测试运行器必须同步停机：否则编号继续推进、排队中的写入还会照发
+            self.testRunner.handleDisconnect()
         }
 
         recordLaunch()
@@ -440,7 +442,7 @@ final class WingController: ObservableObject {
     /// 报告开头记录当时的连接 / did / 特征值环境，便于对照截图
     func testEnvironmentText() -> String {
         let learned = learnedDeviceIDHex ?? "—"
-        return "连接=\(connectionText) | did=\(deviceIDHex) | 设备回传=\(learned) | 特征值=\(ble.allCharacteristicInfo) | 可写通道=\(ble.writeTargets.count)"
+        return "连接=\(connectionText) | did=\(deviceIDHex) | 设备回传=\(learned) | 特征值=\(ble.allCharacteristicInfo) | 可写通道=\(ble.writeTargets.count) | 写入长度=\(ble.writeLengthInfo)"
     }
 
     func resubscribeNotifyForTest() { ble.resubscribeNotify() }
@@ -478,6 +480,11 @@ final class WingController: ObservableObject {
             let delay = Double(index) * 0.16
             let task = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
+                guard self.isConnected else {
+                    self.appendLog("测试指令未发送：蓝牙已断开")
+                    self.testRunner.handleDisconnect()
+                    return
+                }
                 if broadcast {
                     self.ble.writeToAll(item, withoutResponse: withoutResponse)
                 } else {
@@ -487,6 +494,38 @@ final class WingController: ObservableObject {
             testSendTasks.append(task)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
         }
+    }
+
+    /// 严格复刻小程序的单次发送：默认通道（小程序只认同时支持 write + notify 的
+    /// 那个特征值）、带响应写、did 用设备状态帧回传值、命令为「一键上升」。
+    /// 与穷举矩阵做对照：连这一帧都不动，问题就在连接 / 配对层，而不是帧内容。
+    func sendOriginalProbe() {
+        cancelTestWrites()
+        guard !demoMode else {
+            appendLog("原样复刻中止：请先关闭演示模式")
+            return
+        }
+        guard isConnected else {
+            appendLog("原样复刻中止：蓝牙未连接")
+            testRunner.handleDisconnect()
+            return
+        }
+        let did = learnedDeviceIDHex ?? deviceIDHex
+        let hex = "BB\(did)80060100"
+        let data = WingProtocol.data(fromHex: hex) ?? Data()
+        lastCommandHex = hex
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            guard self.isConnected else {
+                self.appendLog("原样复刻未发送：蓝牙已断开")
+                self.testRunner.handleDisconnect()
+                return
+            }
+            self.ble.write(data, withoutResponse: false, targetUUID: nil)
+        }
+        testSendTasks.append(work)
+        DispatchQueue.main.async(execute: work)
+        appendLog("原样复刻小程序：带响应写 / 默认通道 / \(hex)")
     }
 
     /// 生成测试矩阵。每一项都有稳定编号，用户只需记下「尾翼动了」的编号。
@@ -502,7 +541,8 @@ final class WingController: ObservableObject {
             _ title: String,
             _ detail: String,
             _ frames: [Data],
-            nr: Bool = true,
+            // 默认带响应写：只有它才有 ATT 回执，能看出「没送达」还是「设备不执行」
+            nr: Bool = false,
             target: String? = nil,
             broadcast: Bool = false,
             resubscribe: Bool = false,
@@ -592,7 +632,7 @@ final class WingController: ObservableObject {
                 let hex = String(format: "%02X", value)
                 let up = frame("BB\(hex)80060100")
                 let down = frame("BB\(hex)80060200")
-                add("did 全扫描 \(hex)", "上升 + 下降 / did=\(hex)", [up, down], hold: 0.7)
+                add("did 全扫描 \(hex)", "上升 + 下降 / did=\(hex)", [up, down], nr: true, hold: 0.7)
             }
         }
         return list
@@ -686,6 +726,8 @@ final class WingTestRunner: ObservableObject {
     @Published private(set) var statusText = "未开始"
     @Published private(set) var reportCopied = false
     @Published private(set) var environment = ""
+    /// 非空表示测试被蓝牙断开中断，面板要显示醒目提示（文字 + 图标，不只靠颜色）
+    @Published private(set) var interruptedReason: String?
 
     // 属性名刻意不与局部 `guard let controller` 同名，避免对非可选局部常量误用 `?.`
     private weak var owner: WingController?
@@ -708,6 +750,33 @@ final class WingTestRunner: ObservableObject {
 
     // MARK: 运行控制
 
+    /// 蓝牙断开：立刻取消排队的写入与编号推进，并把原因显示在面板与报告里。
+    /// 小程序本身也用 onBLEConnectionStateChange 弹「蓝牙已断开」并停止操作。
+    func handleDisconnect() {
+        guard isRunning || singleStepMode || (!cases.isEmpty && !isFinished) else { return }
+        pending?.cancel()
+        owner?.cancelTestWrites()
+        isRunning = false
+        singleStepMode = false
+        let at = currentIndex > 0 ? "第 #\(currentIndex) 项" : "开始时"
+        let reason = "蓝牙已断开（\(at)），测试已停止，后续指令全部取消"
+        interruptedReason = reason
+        statusText = "⚠️ 蓝牙已断开，测试已停止"
+        owner?.appendLog("⚠️ \(reason)")
+    }
+
+    /// 单项对照：严格按小程序发一次「一键上升」，用于确认问题是否在连接层。
+    func probeOriginal() {
+        guard let controller = owner, controller.isConnected else {
+            statusText = "请先连接蓝牙，再试原样命令"
+            owner?.appendLog("原样命令未发送：蓝牙未连接")
+            return
+        }
+        owner?.cancelTestWrites()
+        controller.sendOriginalProbe()
+        statusText = "已发小程序原样命令（一键上升）"
+    }
+
     func start(mode: WingTestMode) {
         guard let controller = owner else { return }
         guard !controller.demoMode else {
@@ -728,6 +797,7 @@ final class WingTestRunner: ObservableObject {
         successIDs = []
         isFinished = false
         reportCopied = false
+        interruptedReason = nil
         environment = controller.testEnvironmentText()
         statusText = "准备开始 · 共 \(cases.count) 项"
         controller.appendLog("=== 一键协议测试开始：\(mode.rawValue) / 共 \(cases.count) 项 ===")
@@ -737,6 +807,11 @@ final class WingTestRunner: ObservableObject {
 
     private func runNext() {
         guard isRunning || singleStepMode else { return }
+        // 每一步都重新确认连接：蓝牙可能在等待期间掉线，不能继续往队列里塞写入
+        guard let connected = owner?.isConnected, connected else {
+            handleDisconnect()
+            return
+        }
         guard currentIndex < cases.count else {
             finish()
             return
@@ -756,6 +831,10 @@ final class WingTestRunner: ObservableObject {
 
     private func execute(_ item: WingTestCase) {
         guard let controller = owner else { return }
+        guard controller.isConnected else {
+            handleDisconnect()
+            return
+        }
         if item.resubscribe { controller.resubscribeNotifyForTest() }
         controller.sendTestFrames(
             item.frames,
@@ -809,6 +888,10 @@ final class WingTestRunner: ObservableObject {
 
     func resume() {
         guard !cases.isEmpty, !isFinished else { return }
+        guard let connected = owner?.isConnected, connected else {
+            statusText = "请先重新连接蓝牙，再点继续"
+            return
+        }
         // 暂停发生在等待中时，当前项还没有结果，重跑它
         if currentIndex > 0, !results.contains(where: { $0.caseID == currentIndex }) {
             currentIndex -= 1
@@ -865,6 +948,7 @@ final class WingTestRunner: ObservableObject {
         successIDs = []
         isFinished = false
         reportCopied = false
+        interruptedReason = nil
         statusText = "未开始"
     }
 
@@ -897,6 +981,15 @@ final class WingTestRunner: ObservableObject {
             .map { "#\($0.caseID)" }.joined(separator: ", ")
         let autoText = auto.isEmpty ? "无" : auto
         lines.append("状态帧有变化：\(autoText)")
+        if let ble = owner?.ble {
+            lines.append("写入统计：尝试 \(ble.writeAttemptCount) 次 / ATT 成功 \(ble.writeAckCount) 次 / 失败 \(ble.writeFailureCount) 次（无响应写没有 ATT 回执，不计入成功或失败）")
+            lines.append("最后一次写入回执：\(ble.lastWriteStatus)")
+            lines.append("写入长度上限：\(ble.writeLengthInfo)")
+            lines.append("完整特征值清单：\(ble.allCharacteristicInfo)")
+        }
+        if let interrupted = interruptedReason {
+            lines.append("⚠️ 中断：\(interrupted)")
+        }
         lines.append("--- 明细：编号 | 说明 | 帧 | 通道 | 自动判定 | 用户标记 ---")
         var map: [Int: WingTestResult] = [:]
         for result in results { map[result.caseID] = result }

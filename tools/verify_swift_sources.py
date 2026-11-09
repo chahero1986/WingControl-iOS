@@ -34,6 +34,8 @@
      都会退回「只能靠猜」的状态。
  11. `guard let x = ...` 会把 x 解包成非可选，同一作用域里再写 `x?.foo()` 会报
      "cannot use optional chaining on non-optional value"（CI 归档失败过一次）。
+ 12. 一键测试必须监听蓝牙断开并每步检查连接，同时把 ATT 写入回执显示到面板。
+     否则断线后仍继续发指令，且「全程无反馈」时无法区分没送达 / 设备不执行。
 
 用法：
     python tools/verify_swift_sources.py           # 检查全部 Swift 文件
@@ -526,6 +528,50 @@ def check_test_runner_wiring() -> list[str]:
     return errors
 
 
+def check_connection_guard() -> list[str]:
+    """校验测试期间的断线停机与 ATT 回执可见性，防止排查能力被误删。
+
+    真机反馈：蓝牙断了测试还在发指令、两组矩阵跑完尾翼全无动作。根因之一是
+    默认无响应写没有 ATT 回执，日志里的「写入成功」并不代表设备收到。
+    """
+    errors: list[str] = []
+    checks = {
+        "WingControl/Services/BLEManager.swift": [
+            ("var lastWriteStatus", "缺少写入回执状态"),
+            ("var writeFailureCount", "缺少写入失败计数"),
+            ("func readAllReadableCharacteristics", "缺少读取可读特征值（触发配对 / 握手）"),
+            ("maximumWriteValueLength", "缺少单次写入长度上限诊断"),
+            ("ATT 写入失败", "didWriteValueFor 没有记录 ATT 错误码"),
+        ],
+        "WingControl/Services/WingController.swift": [
+            ("func handleDisconnect()", "缺少断开停机处理"),
+            ("self.testRunner.handleDisconnect()", "断开事件没有转发给测试运行器"),
+            ("interruptedReason", "缺少面板可见的中断原因"),
+            ("func sendOriginalProbe()", "缺少小程序原样命令对照"),
+            ("guard self.isConnected else", "排队写入前没有检查连接"),
+            ("nr: Bool = false", "标准矩阵默认不是带响应写，拿不到 ATT 回执"),
+            ("ble.writeAttemptCount", "报告缺写入回执统计"),
+        ],
+        "WingControl/Views/DeviceView.swift": [
+            ("disconnectBanner", "面板缺少断开提示条"),
+            ("connectionBanner", "面板缺少未连接提示条"),
+            ("writeReceiptCard", "面板缺少写入回执卡片"),
+            ("runner.probeOriginal()", "面板缺少原样命令按钮"),
+            ("controller.ble.readAllReadableCharacteristics()", "面板缺少读取特征值按钮"),
+        ],
+    }
+    for rel, tokens in checks.items():
+        path = ROOT / rel
+        if not path.exists():
+            errors.append(f"{rel}: 文件缺失")
+            continue
+        src = path.read_text(encoding="utf-8")
+        for token, message in tokens:
+            if token not in src:
+                errors.append(f"{rel}: {message}（缺少 {token}）")
+    return errors
+
+
 def check_optional_chaining_shadowing(swift_files: list[Path]) -> list[str]:
     """`guard let x = ...` 之后的 x 已是非可选，再写 `x?.` 会直接编译失败。
 
@@ -593,15 +639,16 @@ def main() -> int:
     errors.extend(check_ui_wiring())
     errors.extend(check_text_contrast())
     errors.extend(check_test_runner_wiring())
+    errors.extend(check_connection_guard())
     errors.extend(check_optional_chaining_shadowing(files))
 
-    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面 / 文字对比度 / 测试矩阵 / 可选链配置")
+    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面 / 文字对比度 / 测试矩阵 / 断线守卫 / 可选链配置")
     if errors:
         print("\n=== 发现 %d 个问题 ===" % len(errors))
         for err in errors:
             print("ERROR:", err)
         return 1
-    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面 / 文字对比度 / 测试矩阵 / 可选链遮蔽）")
+    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面 / 文字对比度 / 测试矩阵 / 断线守卫 / 可选链遮蔽）")
     return 0
 
 
