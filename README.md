@@ -109,7 +109,7 @@ python tools/verify_swift_sources.py     # Swift 源码静态检查
 python tools/verify_protocol.py          # 协议帧与校验规则
 ```
 
-`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）、**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）和**文字对比度**（禁止裸系统语义色、提示框必须自定义、分组标题与两行重发按钮必须有确定颜色）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
+`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）、**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）、**文字对比度**（禁止裸系统语义色、提示框必须自定义、分组标题与两行重发按钮必须有确定颜色）和**一键测试矩阵**（入口、运行器、编号、报告、特征值枚举）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
 
 首次真实编译（Xcode 16.4 / macOS 15 runner）报过 `DailyModeView.swift:42: extra argument 'minHeight' in call`：SwiftUI 的 `frame` 有两个重载——`frame(width:height:alignment:)` 与 `frame(minWidth:…:maxHeight:alignment:)`——`width`/`height` 不能和 `min*`/`max*` 同用。现在统一改为 `.frame(minWidth: 44, minHeight: 44)`，既合法又能随 Dynamic Type 放大。
 
@@ -244,6 +244,41 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 顺带把 `DailyModeView` 的 4 处 `.secondary`、`Components.swift` 的 chevron `.tertiary`、工具栏蓝牙图标、弹层「关闭」按钮、「进入校准模式」按钮也全部显式着色，避免同类问题在别的页面复发。静态预检新增 `check_text_contrast()` 拦截回退。
 
 `Preview/index.html` 是纯 CSS 硬编码配色（无系统控件），不受此问题影响，无需改动。
+
+### 一键协议测试矩阵（2026-11-09 第三轮）
+
+前三轮分别修了 did 同步、写入方式、深色文字可见性，但真机上 `did=1C` / `did=0B`、两种写入方式都试过，状态帧依旧 `BB1C2001050000A5…` 不变。继续靠猜没有意义，这一版改成**自动穷举 + 人工回报编号**：
+
+**用法（设备 → 一键协议测试 → 打开一键协议测试）**
+
+1. 关闭「演示模式」，连上蓝牙，站在能看到尾翼的位置。
+2. 点「开始标准矩阵」：约 40 项，每项停留约 2 秒，界面用 56pt 大号显示 `#1`、`#2`…… 以及当前帧、写入通道、写入方式。
+3. 看到尾翼动，立刻点「★ 这个编号有效（尾翼动了）」，或把编号记在纸上。
+4. 跑完点「复制测试报告」，粘贴发回即可。报告含每一项的**完整命令帧、写入通道、写入方式、状态帧是否变化、用户标记**，可以直接定位原因。
+5. 标准矩阵全无效时，点「did 全扫描」：`0x00~0xFF` 共 256 项，每个 did 都发一次「一键上升 + 一键下降」保证动作可见，约 3 分钟。若设备按 did 过滤，这一步一定能找出它认可的值。
+6. 面板还支持暂停 / 继续 / 单步下一项 / 重发当前编号 / 停止重置，方便对可疑编号反复验证。
+
+**矩阵覆盖的变量**（每一项都有稳定编号，测试开始时一次性生成快照，运行中 did 自动同步不会改变编号含义）：
+
+| 维度 | 取值 |
+| --- | --- |
+| 写入通道 | 设备暴露的**每一个可写特征值**各试一次，外加「群发全部通道」 |
+| 写入方式 | 无响应写 `.withoutResponse` / 带响应写 `.withResponse` |
+| 命令字 | 小程序全部 6 种命令 + 唤醒帧 + 第 3 字节改 `20` + 帧头改 `AA` + 去掉 did 的 5 字节 |
+| 帧形态 | 6 字节二进制、12 字节 ASCII 大写/小写、CRLF 结尾、累加校验、异或校验、补零到 12 / 20 字节、整帧反序 |
+| 发送时序 | 连发 3 次、上升+下降交替、重新订阅 notify 后发、带响应写延迟重发、连接后等 5 秒再发 |
+| 指令 ID | 常见候选 `00/01/0A/0B/10/1C/20/7F/80/FF` + 设备回传值 + 本机缓存值；另有 0x00~0xFF 全扫描 |
+
+**为什么加了「遍历所有可写特征值」**：复查原小程序 `getBLEDeviceCharacteristics` 发现它只挑 `properties.write && properties.notify` 的**同一个**特征值，而 App 原来在找不到这种组合时会退化为「分别取第一个可写 / 第一个可通知」，可能写到了另一个特征值——ATT 层依然报告写入成功，设备却收不到命令。现在 `BLEManager` 会扫描**所有主服务**的全部特征值、打印完整清单，测试矩阵逐个通道验证。
+
+| 文件 | 改动 |
+| --- | --- |
+| `Services/BLEManager.swift` | 扫描全部主服务的特征值；`writeTargets` / `allCharacteristicInfo` 暴露给界面；支持按 UUID 指定写入、`writeToAll` 群发、`resubscribeNotify` 重新订阅 |
+| `Services/WingController.swift` | `buildTestCases(mode:)` 生成测试矩阵、`sendTestFrames` 定时逐帧发送、`telemetryRevision` 供自动判定；新增 `WingTestRunner`（编号推进、暂停/单步、标记成功、报告生成、`UIPasteboard` 复制） |
+| `Views/DeviceView.swift` | 「一键协议测试」入口 + `WingTestPanel` 全屏面板（大号编号、进度、当前帧、控制按钮、最近 40 条记录、复制报告），文字全部显式着色 |
+| `tools/verify_swift_sources.py` | 新增 `check_test_runner_wiring()`，拦截测试矩阵被误删 |
+
+**注意**：`状态帧未变化` 只是辅助判定，不能作为失败依据——尾翼机械动作可能不反馈到状态帧。**以亲眼看到动作的编号为准**。测试期间每条命令也会写进「最近命令日志」，可截图辅助核对。
 
 ---
 

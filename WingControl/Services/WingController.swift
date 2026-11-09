@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 
 /// 页面状态机：把原小程序 Page 的 data + 事件处理迁移到 ObservableObject
 final class WingController: ObservableObject {
@@ -41,10 +42,15 @@ final class WingController: ObservableObject {
     private var cancellable: AnyCancellable?
 
     // 指令响应检测：设备每秒上报状态帧，命令生效后帧内容必然改变
-    private var lastTelemetryHex: String?
+    @Published private(set) var lastTelemetryHex: String?
+    /// 每解析一帧状态就自增，供测试程序判断是否真的收到了新帧
+    @Published private(set) var telemetryRevision = 0
     private var baselineTelemetryHex: String?
     private var awaitingReply = false
     private var replyCheckWorkItem: DispatchWorkItem?
+
+    /// 一键协议测试运行器（用例矩阵 / 定时推进 / 结果报告）
+    let testRunner = WingTestRunner()
 
     init() {
         // 与原小程序一致：首次生成随机 did(0~255) 并缓存。
@@ -58,6 +64,7 @@ final class WingController: ObservableObject {
             defaults.set(Int(deviceID), forKey: deviceIDKey)
         }
         deviceIDHex = String(format: "%02X", deviceID)
+        testRunner.attach(self)
 
         #if targetEnvironment(simulator)
         // 模拟器没有 BLE，自动进入演示模式，便于无硬件验证全部交互
@@ -320,6 +327,7 @@ final class WingController: ObservableObject {
             return
         }
         appendLog("收到状态 ← \(hex)")
+        telemetryRevision += 1
 
         // 命令生效后状态帧必然变化；用于判断设备是「收到」还是「执行」。
         // 若发命令前还没收到过任何状态帧，则这一帧本身就算设备有回应。
@@ -427,6 +435,169 @@ final class WingController: ObservableObject {
         handleReply(demoTelemetryData())
     }
 
+    // MARK: - 一键协议测试（用例矩阵与底层发送）
+
+    /// 报告开头记录当时的连接 / did / 特征值环境，便于对照截图
+    func testEnvironmentText() -> String {
+        let learned = learnedDeviceIDHex ?? "—"
+        return "连接=\(connectionText) | did=\(deviceIDHex) | 设备回传=\(learned) | 特征值=\(ble.allCharacteristicInfo) | 可写通道=\(ble.writeTargets.count)"
+    }
+
+    func resubscribeNotifyForTest() { ble.resubscribeNotify() }
+
+    /// 测试运行期间排队的写入任务，停止测试时一并取消，避免关闭面板后还继续发指令
+    private var testSendTasks: [DispatchWorkItem] = []
+
+    func cancelTestWrites() {
+        for task in testSendTasks { task.cancel() }
+        testSendTasks.removeAll()
+    }
+
+    /// 测试专用发送：不触发常规指令的 3.5 秒诊断，避免刷屏；
+    /// 所有帧在开始测试时就已生成快照，运行过程中 did 自动同步不会影响编号含义。
+    func sendTestFrames(
+        _ frames: [Data],
+        withoutResponse: Bool,
+        targetUUID: String?,
+        broadcast: Bool,
+        note: String
+    ) {
+        cancelTestWrites()
+        guard !demoMode else {
+            appendLog("测试中止：演示模式未关闭，指令不会发到蓝牙")
+            return
+        }
+        guard isConnected else {
+            appendLog("测试中止：设备未连接")
+            return
+        }
+        if let first = frames.first { lastCommandHex = WingProtocol.hexString(first) }
+        let hexList = frames.map { WingProtocol.hexString($0) }.joined(separator: " / ")
+        appendLog("\(note) → \(hexList)")
+        for (index, item) in frames.enumerated() {
+            let delay = Double(index) * 0.16
+            let task = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                if broadcast {
+                    self.ble.writeToAll(item, withoutResponse: withoutResponse)
+                } else {
+                    self.ble.write(item, withoutResponse: withoutResponse, targetUUID: targetUUID)
+                }
+            }
+            testSendTasks.append(task)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
+        }
+    }
+
+    /// 生成测试矩阵。每一项都有稳定编号，用户只需记下「尾翼动了」的编号。
+    /// 变量：写入通道、写入方式、帧内容与长度、指令 ID、发送时序。
+    func buildTestCases(mode: WingTestMode) -> [WingTestCase] {
+        let did = deviceIDHex
+        let learned = learnedDeviceIDHex ?? did
+        let targets = ble.writeTargets
+        var list: [WingTestCase] = []
+
+        func frame(_ hex: String) -> Data { WingProtocol.data(fromHex: hex) ?? Data() }
+        func add(
+            _ title: String,
+            _ detail: String,
+            _ frames: [Data],
+            nr: Bool = true,
+            target: String? = nil,
+            broadcast: Bool = false,
+            resubscribe: Bool = false,
+            lead: TimeInterval = 0,
+            hold: TimeInterval = 1.8
+        ) {
+            let hexList = frames.map { WingProtocol.hexString($0) }.joined(separator: " / ")
+            list.append(WingTestCase(
+                id: list.count + 1,
+                title: title,
+                detail: detail,
+                frames: frames,
+                frameHex: hexList,
+                withoutResponse: nr,
+                targetUUID: target,
+                broadcast: broadcast,
+                resubscribe: resubscribe,
+                leadDelay: lead,
+                hold: hold
+            ))
+        }
+
+        if mode == .standard {
+            let standardHex = "BB\(did)80010500"
+            let standard = frame(standardHex)
+            let bytes = [UInt8](standard)
+
+            // A. 每个可写通道 × 两种写入方式：排除「写错特征值」这个最隐蔽的原因
+            let channels: [String?] = targets.isEmpty ? [nil] : targets.map { Optional($0.uuid) }
+            for uuid in channels {
+                let name = uuid.map { wingShortUUID($0) } ?? "默认通道"
+                add("通道 \(name) · 无响应写", "标准帧 / 无响应写 / \(name)",
+                    [standard], nr: true, target: uuid)
+                add("通道 \(name) · 带响应写", "标准帧 / 带响应写 / \(name)",
+                    [standard], nr: false, target: uuid)
+            }
+
+            // B. 原小程序所有命令字，以及帧长 / 校验 / ASCII / 时序等常见变体
+            let variants: [(String, String)] = [
+                ("标准 6 字节 · 档位 5", standardHex),
+                ("一键上升", "BB\(did)80060100"),
+                ("一键下降", "BB\(did)80060200"),
+                ("设置档位 3", "BB\(did)80010300"),
+                ("关闭自动升降", "BB\(did)80030000"),
+                ("开启自动升降 10/80", "BB\(did)80020A50"),
+                ("赛道灵敏度 1", "BB\(did)80040100"),
+                ("点火升降开", "BB\(did)80050100"),
+                ("唤醒帧 8000", "BB\(did)80000000"),
+                ("第 3 字节改 20", "BB\(did)20010500"),
+                ("帧头改 AA", "AA\(did)80010500"),
+                ("去掉 did 的 5 字节", "BB80010500")
+            ]
+            for variant in variants {
+                add(variant.0, "帧变体 / 默认通道 / 无响应写", [frame(variant.1)])
+            }
+
+            let sum = UInt8(bytes.reduce(0) { $0 + Int($1) } % 256)
+            let xor = bytes.reduce(UInt8(0)) { $0 ^ $1 }
+            add("ASCII 大写 12 字节", "把整帧当字符串写入", [Data(standardHex.uppercased().utf8)])
+            add("ASCII 小写 12 字节", "把整帧当字符串写入", [Data(standardHex.lowercased().utf8)])
+            add("6 字节 + 回车换行", "帧尾 CRLF", [Data(bytes + [0x0D, 0x0A])])
+            add("6 字节 + 累加校验", "第 7 字节为累加和", [Data(bytes + [sum])])
+            add("6 字节 + 异或校验", "第 7 字节为异或值", [Data(bytes + [xor])])
+            add("补零到 12 字节", "部分固件按固定长度收帧", [Data(bytes + [UInt8](repeating: 0, count: 6))])
+            add("补零到 20 字节", "按 BLE MTU 固定长度收帧", [Data(bytes + [UInt8](repeating: 0, count: 14))])
+            add("整帧字节反序", "字节序颠倒", [Data(bytes.reversed())])
+            add("同一帧连发 3 次", "排除单次写入被丢弃", [standard, standard, standard])
+            add("上升 + 下降交替", "让动作更容易被看见",
+                [frame("BB\(did)80060100"), frame("BB\(did)80060200")])
+            add("重新订阅 notify 后发", "先关再开通知", [standard], resubscribe: true)
+            add("群发全部可写通道", "一次写遍所有特征值", [standard], broadcast: true)
+            add("带响应写 · 延迟再发一次", "有回执 + 重复", [standard, standard], nr: false, hold: 2.6)
+            add("等待 5 秒后再发", "小程序启动后有 5 秒延时", [standard], lead: 5, hold: 2.4)
+
+            // C. 常见 did 候选（含状态帧第 2 字节、本机缓存值）
+            var candidates = ["00", "01", "0A", "0B", "10", "1C", "20", "7F", "80", "FF", learned, did]
+            var seen = Set<String>()
+            candidates = candidates.filter { seen.insert($0).inserted }
+            for candidate in candidates {
+                add("did=\(candidate) · 标准帧", "指令 ID 候选 / 默认通道",
+                    [frame("BB\(candidate)80010500")])
+            }
+        } else {
+            // did 全扫描：0x00~0xFF 逐个试，一帧上升 + 一帧下降保证动作可见。
+            // 若设备按 did 过滤命令，这一步一定能找出它认可的值。
+            for value in 0...255 {
+                let hex = String(format: "%02X", value)
+                let up = frame("BB\(hex)80060100")
+                let down = frame("BB\(hex)80060200")
+                add("did 全扫描 \(hex)", "上升 + 下降 / did=\(hex)", [up, down], hold: 0.7)
+            }
+        }
+        return list
+    }
+
     // MARK: - 蓝牙操作包装
 
     func startScan() {
@@ -450,5 +621,311 @@ final class WingController: ObservableObject {
         state.isFirstReception = true
         ble.disconnect()
         appendLog("已断开连接")
+    }
+}
+
+// MARK: - 一键协议测试：数据模型与运行器
+
+private func wingShortUUID(_ uuid: String) -> String {
+    let upper = uuid.uppercased()
+    if upper.count > 8 { return String(upper.prefix(8)) }
+    return upper
+}
+
+enum WingTestMode: String, CaseIterable, Identifiable {
+    case standard = "标准矩阵"
+    case didScan = "did 全扫描"
+
+    var id: String { rawValue }
+}
+
+/// 一个待试的发送组合。编号在测试开始时一次性生成并固定，
+/// 用户只要回报「#几 有效」即可精确定位原因。
+struct WingTestCase: Identifiable {
+    let id: Int
+    let title: String
+    let detail: String
+    let frames: [Data]
+    let frameHex: String
+    let withoutResponse: Bool
+    let targetUUID: String?
+    let broadcast: Bool
+    let resubscribe: Bool
+    let leadDelay: TimeInterval
+    let hold: TimeInterval
+
+    var channelText: String {
+        let mode = withoutResponse ? "无响应写" : "带响应写"
+        if broadcast { return "群发全部通道 · \(mode)" }
+        let target = targetUUID.map { wingShortUUID($0) } ?? "默认通道"
+        return "\(target) · \(mode)"
+    }
+}
+
+struct WingTestResult: Identifiable {
+    let id: Int
+    let caseID: Int
+    let title: String
+    let frameHex: String
+    let channel: String
+    let telemetryChanged: Bool
+    var userMarked: Bool
+}
+
+/// 逐项自动发送：每项停留 hold 秒供用户观察尾翼动作，
+/// 同时记录状态帧是否变化作为辅助判定，最后生成可复制的文本报告。
+final class WingTestRunner: ObservableObject {
+
+    @Published private(set) var cases: [WingTestCase] = []
+    @Published private(set) var results: [WingTestResult] = []
+    @Published private(set) var currentIndex = 0
+    @Published private(set) var isRunning = false
+    @Published private(set) var isFinished = false
+    @Published private(set) var mode: WingTestMode = .standard
+    @Published private(set) var successIDs: [Int] = []
+    @Published private(set) var statusText = "未开始"
+    @Published private(set) var reportCopied = false
+    @Published private(set) var environment = ""
+
+    private weak var controller: WingController?
+    private var pending: DispatchWorkItem?
+    private var baselineHex: String?
+    private var baselineRevision = 0
+    private var singleStepMode = false
+
+    func attach(_ controller: WingController) { self.controller = controller }
+
+    var currentCase: WingTestCase? {
+        guard currentIndex > 0, currentIndex <= cases.count else { return nil }
+        return cases[currentIndex - 1]
+    }
+
+    var progress: Double {
+        guard !cases.isEmpty else { return 0 }
+        return Double(currentIndex) / Double(cases.count)
+    }
+
+    // MARK: 运行控制
+
+    func start(mode: WingTestMode) {
+        guard let controller = controller else { return }
+        guard !controller.demoMode else {
+            statusText = "请先关闭演示模式"
+            return
+        }
+        guard controller.isConnected else {
+            statusText = "请先连接设备"
+            return
+        }
+        pending?.cancel()
+        controller?.cancelTestWrites()
+        singleStepMode = false
+        self.mode = mode
+        cases = controller.buildTestCases(mode: mode)
+        results = []
+        currentIndex = 0
+        successIDs = []
+        isFinished = false
+        reportCopied = false
+        environment = controller.testEnvironmentText()
+        statusText = "准备开始 · 共 \(cases.count) 项"
+        controller.appendLog("=== 一键协议测试开始：\(mode.rawValue) / 共 \(cases.count) 项 ===")
+        isRunning = true
+        runNext()
+    }
+
+    private func runNext() {
+        guard isRunning || singleStepMode else { return }
+        guard currentIndex < cases.count else {
+            finish()
+            return
+        }
+        currentIndex += 1
+        let item = cases[currentIndex - 1]
+        statusText = "正在执行 #\(item.id) / \(cases.count)"
+        baselineHex = controller?.lastTelemetryHex
+        baselineRevision = controller?.telemetryRevision ?? 0
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.execute(item)
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + item.leadDelay, execute: work)
+    }
+
+    private func execute(_ item: WingTestCase) {
+        guard let controller = controller else { return }
+        if item.resubscribe { controller.resubscribeNotifyForTest() }
+        controller.sendTestFrames(
+            item.frames,
+            withoutResponse: item.withoutResponse,
+            targetUUID: item.targetUUID,
+            broadcast: item.broadcast,
+            note: "测试 #\(item.id) \(item.title)"
+        )
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.evaluate(item)
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + item.hold, execute: work)
+    }
+
+    private func evaluate(_ item: WingTestCase) {
+        guard let controller = controller else { return }
+        var changed = false
+        if controller.telemetryRevision > baselineRevision,
+           let now = controller.lastTelemetryHex {
+            changed = (now != baselineHex)
+        }
+        results.append(WingTestResult(
+            id: results.count + 1,
+            caseID: item.id,
+            title: item.title,
+            frameHex: item.frameHex,
+            channel: item.channelText,
+            telemetryChanged: changed,
+            userMarked: false
+        ))
+        let verdict = changed ? "状态帧变化（可能生效）" : "状态帧未变化"
+        controller.appendLog("测试 #\(item.id) 结果：\(verdict) · \(item.frameHex)")
+        if isRunning && !singleStepMode {
+            runNext()
+        } else {
+            singleStepMode = false
+            statusText = "已暂停 · #\(item.id) 完成"
+        }
+    }
+
+    func pause() {
+        pending?.cancel()
+        controller?.cancelTestWrites()
+        isRunning = false
+        singleStepMode = false
+        statusText = "已暂停"
+        controller?.appendLog("一键协议测试已暂停")
+    }
+
+    func resume() {
+        guard !cases.isEmpty, !isFinished else { return }
+        // 暂停发生在等待中时，当前项还没有结果，重跑它
+        if currentIndex > 0, !results.contains(where: { $0.caseID == currentIndex }) {
+            currentIndex -= 1
+        }
+        isRunning = true
+        singleStepMode = false
+        statusText = "继续执行"
+        runNext()
+    }
+
+    func stepForward() {
+        pending?.cancel()
+        controller?.cancelTestWrites()
+        isRunning = false
+        if cases.isEmpty {
+            guard let controller = controller else { return }
+            cases = controller.buildTestCases(mode: mode)
+            environment = controller.testEnvironmentText()
+        }
+        guard currentIndex < cases.count else {
+            statusText = "已经是最后一项"
+            return
+        }
+        isFinished = false
+        singleStepMode = true
+        runNext()
+    }
+
+    func restartCurrent() {
+        pending?.cancel()
+        controller?.cancelTestWrites()
+        isRunning = false
+        guard currentIndex > 0 else {
+            statusText = "尚未开始测试"
+            return
+        }
+        currentIndex -= 1
+        singleStepMode = true
+        runNext()
+    }
+
+    func stop() {
+        pending?.cancel()
+        controller?.cancelTestWrites()
+        isRunning = false
+        singleStepMode = false
+    }
+
+    func reset() {
+        stop()
+        cases = []
+        results = []
+        currentIndex = 0
+        successIDs = []
+        isFinished = false
+        reportCopied = false
+        statusText = "未开始"
+    }
+
+    // MARK: 结果记录
+
+    /// 用户看到尾翼动了就点一下：把当前编号写进报告
+    func markSuccess() {
+        guard let item = currentCase else {
+            statusText = "请先开始测试"
+            return
+        }
+        if !successIDs.contains(item.id) { successIDs.append(item.id) }
+        if let index = results.lastIndex(where: { $0.caseID == item.id }) {
+            results[index].userMarked = true
+        }
+        controller?.appendLog("★ 用户标记：测试 #\(item.id) 有效 · \(item.frameHex)")
+        statusText = "已标记 #\(item.id) 成功"
+    }
+
+    func reportText() -> String {
+        var lines: [String] = []
+        lines.append("尾翼控制器 · 一键协议测试报告")
+        lines.append("模式：\(mode.rawValue)")
+        lines.append("环境：\(environment)")
+        lines.append("用例：\(cases.count) 项 / 已执行 \(results.count) 项")
+        let marks = successIDs.sorted().map { "#\($0)" }.joined(separator: ", ")
+        let markText = marks.isEmpty ? "无" : marks
+        lines.append("★ 用户标记成功：\(markText)")
+        let auto = results.filter { $0.telemetryChanged }
+            .map { "#\($0.caseID)" }.joined(separator: ", ")
+        let autoText = auto.isEmpty ? "无" : auto
+        lines.append("状态帧有变化：\(autoText)")
+        lines.append("--- 明细：编号 | 说明 | 帧 | 通道 | 自动判定 | 用户标记 ---")
+        var map: [Int: WingTestResult] = [:]
+        for result in results { map[result.caseID] = result }
+        for item in cases {
+            let result = map[item.id]
+            let judge: String
+            if let value = result {
+                judge = value.telemetryChanged ? "帧变化" : "帧未变"
+            } else {
+                judge = "未执行"
+            }
+            let marked = (result?.userMarked ?? false) ? "★成功" : ""
+            lines.append("#\(item.id) | \(item.title) | \(item.frameHex) | \(item.channelText) | \(judge) | \(marked)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    func copyReport() {
+        UIPasteboard.general.string = reportText()
+        reportCopied = true
+        statusText = "报告已复制，可直接粘贴发送"
+        controller?.appendLog("测试报告已复制到剪贴板")
+    }
+
+    private func finish() {
+        pending?.cancel()
+        isRunning = false
+        singleStepMode = false
+        isFinished = true
+        statusText = "全部完成 · 共 \(cases.count) 项"
+        controller?.appendLog("=== 一键协议测试结束：用户标记 \(successIDs.count) 项成功 ===")
     }
 }

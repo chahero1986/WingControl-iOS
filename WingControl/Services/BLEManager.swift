@@ -9,6 +9,34 @@ struct BLEDevice: Identifiable, Equatable {
     let rssi: Int
 }
 
+/// 一个可写特征值的「写入通道」描述。
+/// 原小程序只挑「同时支持 write + notify」的那一个特征值；
+/// 真机上若选错通道，ATT 写入会成功但设备收不到命令，
+/// 因此测试程序需要把设备暴露的每个可写通道逐个试一遍。
+struct BLEWriteTarget: Identifiable, Equatable {
+    let uuid: String
+    let supportsWrite: Bool
+    let supportsWriteWithoutResponse: Bool
+    let supportsNotify: Bool
+
+    var id: String { uuid }
+
+    var shortName: String {
+        let upper = uuid.uppercased()
+        if upper.hasPrefix("FFE") { return upper }
+        if upper.count > 8 { return String(upper.prefix(8)) }
+        return upper
+    }
+
+    var propertyText: String {
+        var tags: [String] = []
+        if supportsWrite { tags.append("write") }
+        if supportsWriteWithoutResponse { tags.append("writeNR") }
+        if supportsNotify { tags.append("notify") }
+        return tags.isEmpty ? "—" : tags.joined(separator: "+")
+    }
+}
+
 enum BLEConnectionPhase: Equatable {
     case idle
     case scanning
@@ -45,6 +73,10 @@ final class BLEManager: NSObject, ObservableObject {
     @Published private(set) var connectedName: String?
     @Published private(set) var characteristicInfo: String = "—"
     @Published private(set) var isUnsupported: Bool = false
+    /// 全部可写特征值，供「一键协议测试」逐个切换写入通道
+    @Published private(set) var writeTargets: [BLEWriteTarget] = []
+    /// 所有主服务下的特征值清单（UUID + 属性），便于截图排查
+    @Published private(set) var allCharacteristicInfo: String = "—"
 
     /// 收到 notify 数据、断开连接、日志文本的回调（均由主线程触发）
     var onData: ((Data) -> Void)?
@@ -56,6 +88,9 @@ final class BLEManager: NSObject, ObservableObject {
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var writeCharacteristic: CBCharacteristic?
     private var notifyCharacteristic: CBCharacteristic?
+    /// 所有已发现的特征值（可能来自多个主服务），测试矩阵按 UUID 从这里取写入目标
+    private var discoveredCharacteristics: [CBCharacteristic] = []
+    private var subscribedNotifyUUID: String?
     private var scanTimer: Timer?
     private var connectTimer: Timer?
 
@@ -197,6 +232,10 @@ final class BLEManager: NSObject, ObservableObject {
     private func reset() {
         writeCharacteristic = nil
         notifyCharacteristic = nil
+        discoveredCharacteristics.removeAll()
+        subscribedNotifyUUID = nil
+        writeTargets = []
+        allCharacteristicInfo = "—"
         peripheral?.delegate = nil
         peripheral = nil
         connectedName = nil
@@ -204,13 +243,71 @@ final class BLEManager: NSObject, ObservableObject {
         phase = .idle
     }
 
+    /// 挑选写入 / 通知特征值：与原小程序一致，优先「同一个特征值同时可写可通知」。
+    /// 找不到时才退化为分别挑选，此时极易选错，测试矩阵会遍历其余通道。
+    private func refreshCharacteristics() {
+        let all = discoveredCharacteristics
+        let writable: (CBCharacteristic) -> Bool = {
+            $0.properties.contains(.write) || $0.properties.contains(.writeWithoutResponse)
+        }
+        let notifiable: (CBCharacteristic) -> Bool = {
+            $0.properties.contains(.notify) || $0.properties.contains(.indicate)
+        }
+        var seen = Set<String>()
+        let unique = all.filter { seen.insert($0.uuid.uuidString.uppercased()).inserted }
+        writeTargets = unique.filter(writable).map { item in
+            BLEWriteTarget(
+                uuid: item.uuid.uuidString,
+                supportsWrite: item.properties.contains(.write),
+                supportsWriteWithoutResponse: item.properties.contains(.writeWithoutResponse),
+                supportsNotify: notifiable(item)
+            )
+        }
+        allCharacteristicInfo = unique.map { item in
+            "\(item.uuid.uuidString) [\(propertyList(of: item.properties))]"
+        }.joined(separator: " | ")
+        onLog?("特征值清单：\(allCharacteristicInfo)")
+
+        if let combined = unique.first(where: { writable($0) && notifiable($0) }) {
+            writeCharacteristic = combined
+            notifyCharacteristic = combined
+        } else {
+            writeCharacteristic = unique.first(where: writable)
+            notifyCharacteristic = unique.first(where: notifiable)
+        }
+        guard let write = writeCharacteristic, let notify = notifyCharacteristic else { return }
+        characteristicInfo =
+            "Service list · Write \(write.uuid.uuidString) · Notify \(notify.uuid.uuidString)"
+        onLog?("当前通道：写 \(write.uuid.uuidString) / 通知 \(notify.uuid.uuidString)")
+    }
+
+    private func propertyList(of properties: CBCharacteristicProperties) -> String {
+        var tags: [String] = []
+        if properties.contains(.read) { tags.append("read") }
+        if properties.contains(.write) { tags.append("write") }
+        if properties.contains(.writeWithoutResponse) { tags.append("writeNR") }
+        if properties.contains(.notify) { tags.append("notify") }
+        if properties.contains(.indicate) { tags.append("indicate") }
+        return tags.isEmpty ? "none" : tags.joined(separator: "+")
+    }
+
+    /// 按 UUID 指定写入目标；nil 表示用 refreshCharacteristics 选出的默认通道。
+    private func characteristic(forUUID uuid: String?) -> CBCharacteristic? {
+        guard let uuid else { return writeCharacteristic }
+        let wanted = uuid.uppercased()
+        return discoveredCharacteristics.first {
+            $0.uuid.uuidString.uppercased() == wanted
+        }
+    }
+
     /// 微信小程序在 iOS 上对同时支持两种写的特征值走「无响应写」；
     /// 部分 JDY 模块固件也只按无响应写透传。这里做成可切换，并回退到特征值实际支持的模式。
-    func write(_ data: Data, withoutResponse: Bool = true) {
-        guard let peripheral,
-              let characteristic = writeCharacteristic,
+    func write(_ data: Data, withoutResponse: Bool = true, targetUUID: String? = nil) {
+        guard let peripheral = peripheral,
+              let characteristic = characteristic(forUUID: targetUUID),
               peripheral.state == .connected else {
-            onLog?("发送命令失败：设备未连接或特征值不可用")
+            let targetName = targetUUID ?? "默认"
+            onLog?("发送命令失败：设备未连接或特征值不可用（目标 \(targetName)）")
             return
         }
         let supportsFast = characteristic.properties.contains(.writeWithoutResponse)
@@ -229,10 +326,40 @@ final class BLEManager: NSObject, ObservableObject {
 
         peripheral.writeValue(data, for: characteristic, type: type)
         let mode = type == .withResponse ? "带响应写" : "无响应写"
-        onLog?("写入特征值 \(characteristic.uuid.uuidString) · \(mode) · \(WingProtocol.hexString(data))")
+        let channel = targetUUID == nil ? "默认" : "指定"
+        onLog?("写入特征值 \(characteristic.uuid.uuidString) · \(channel) · \(mode) · \(WingProtocol.hexString(data))")
         // 无响应写不会触发 didWriteValueFor，日志里需要显式说明，避免被误判为「没发出去」
         if type == .withoutResponse {
             onLog?("命令已写入（无响应写，设备不返回 ATT 回执）")
+        }
+    }
+
+    /// 对所有可写特征值各发一次：设备若有多个透传通道，总有一个能送达。
+    func writeToAll(_ data: Data, withoutResponse: Bool) {
+        let targets = writeTargets
+        if targets.isEmpty {
+            write(data, withoutResponse: withoutResponse)
+            return
+        }
+        onLog?("群发：向 \(targets.count) 个可写特征值各写一次")
+        for target in targets {
+            write(data, withoutResponse: withoutResponse, targetUUID: target.uuid)
+        }
+    }
+
+    /// 重新订阅 notify：部分 JDY 固件要求订阅动作发生在命令之前。
+    func resubscribeNotify() {
+        guard let peripheral = peripheral,
+              let notify = notifyCharacteristic,
+              peripheral.state == .connected else {
+            onLog?("重新订阅失败：通知特征值不可用")
+            return
+        }
+        onLog?("重新订阅 notify：\(notify.uuid.uuidString)")
+        peripheral.setNotifyValue(false, for: notify)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self = self else { return }
+            self.peripheral?.setNotifyValue(true, for: notify)
         }
     }
 }
@@ -332,9 +459,17 @@ extension BLEManager: CBPeripheralDelegate {
             phase = .failed("该设备没有可用服务")
             return
         }
-        let primary = services.first(where: { $0.isPrimary }) ?? services[0]
-        onLog?("主服务：\(primary.uuid.uuidString)")
-        peripheral.discoverCharacteristics(nil, for: primary)
+        // 原小程序只扫描第一个 isPrimary 服务；CoreBluetooth 返回顺序不保证一致，
+        // 这里把所有主服务都扫一遍，避免漏掉真正的透传服务（FFE0/FFE1）。
+        let primaries = services.filter { $0.isPrimary }
+        let targets = primaries.isEmpty ? services : primaries
+        discoveredCharacteristics.removeAll()
+        subscribedNotifyUUID = nil
+        onLog?("发现服务 \(services.count) 个，扫描主服务 \(targets.count) 个")
+        for service in targets {
+            onLog?("主服务：\(service.uuid.uuidString)")
+            peripheral.discoverCharacteristics(nil, for: service)
+        }
     }
 
     func peripheral(
@@ -347,33 +482,23 @@ extension BLEManager: CBPeripheralDelegate {
             return
         }
         guard let characteristics = service.characteristics, !characteristics.isEmpty else {
-            phase = .failed("该服务没有可用特征值")
             return
         }
-        let writable: (CBCharacteristic) -> Bool = {
-            $0.properties.contains(.write) || $0.properties.contains(.writeWithoutResponse)
-        }
-        let notifiable: (CBCharacteristic) -> Bool = {
-            $0.properties.contains(.notify) || $0.properties.contains(.indicate)
-        }
-
-        // 优先选「同时支持 write + notify」的单特征值（JDY 模块常见 FFE1）
-        if let combined = characteristics.first(where: { writable($0) && notifiable($0) }) {
-            writeCharacteristic = combined
-            notifyCharacteristic = combined
-        } else {
-            writeCharacteristic = characteristics.first(where: writable)
-            notifyCharacteristic = characteristics.first(where: notifiable)
-        }
+        discoveredCharacteristics.append(contentsOf: characteristics)
+        refreshCharacteristics()
 
         guard let write = writeCharacteristic, let notify = notifyCharacteristic else {
             phase = .failed("未找到可写 / 可通知的特征值")
             return
         }
         characteristicInfo =
-            "Service \(service.uuid.uuidString) · Write \(write.uuid.uuidString) · Notify \(notify.uuid.uuidString)"
-        onLog?(characteristicInfo)
-        peripheral.setNotifyValue(true, for: notify)
+            "Write \(write.uuid.uuidString) · Notify \(notify.uuid.uuidString) · 可写通道 \(writeTargets.count) 个"
+        // 后续服务里若出现更合适的通知特征值，改订阅到新的那个
+        let key = notify.uuid.uuidString.uppercased()
+        if subscribedNotifyUUID != key {
+            subscribedNotifyUUID = key
+            peripheral.setNotifyValue(true, for: notify)
+        }
     }
 
     func peripheral(

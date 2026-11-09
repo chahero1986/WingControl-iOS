@@ -26,9 +26,12 @@
   8. 深色主题与界面约定：强制深色、底部三个标签用各自彩色高亮、选中按钮用
      彩色渐变 + 白字、底部品牌栏用新徽标、赛道模式不再有演示动画。
      启动屏可以是深灰，但不能是纯黑；占位控制器必须有浅色文字用于区分真黑屏。
-  9. 文字对比度：所有文字显式着色，禁止裸 `.foregroundStyle(.secondary)` /
+   9. 文字对比度：所有文字显式着色，禁止裸 `.foregroundStyle(.secondary)` /
      `.tertiary` / `.primary`；提示框用自定义 WingAlertOverlay 而非系统 .alert；
      List 行 / 分组标题 / 两行重发按钮都要有确定颜色，否则深色下「字是空白」。
+ 10. 一键协议测试矩阵：蓝牙层要枚举全部可写特征值，控制器要能生成用例、
+     逐项发送、标记成功、复制报告，设备页要有测试面板入口。删掉任一条，
+     都会退回「只能靠猜」的状态。
 
 用法：
     python tools/verify_swift_sources.py           # 检查全部 Swift 文件
@@ -476,6 +479,51 @@ def check_text_contrast() -> list[str]:
     return errors
 
 
+def check_test_runner_wiring() -> list[str]:
+    """校验一键协议测试矩阵，避免排障能力在后续改动里被误删。"""
+    errors: list[str] = []
+    checks = {
+        "WingControl/Services/BLEManager.swift": [
+            ("struct BLEWriteTarget", "缺少可写特征值描述，测试无法枚举写入通道"),
+            ("var writeTargets", "缺少可写特征值清单"),
+            ("var allCharacteristicInfo", "缺少完整特征值清单（截图排查用）"),
+            ("targetUUID: String? = nil", "写入方法不支持按 UUID 指定通道"),
+            ("func writeToAll", "缺少群发全部通道的能力"),
+            ("func resubscribeNotify", "缺少重新订阅 notify 的测试用例支撑"),
+            ("for service in targets", "只扫描第一个主服务会漏掉透传服务"),
+        ],
+        "WingControl/Services/WingController.swift": [
+            ("func buildTestCases(mode:", "缺少测试矩阵生成"),
+            ("func sendTestFrames(", "缺少测试专用发送通道"),
+            ("final class WingTestRunner", "缺少测试运行器"),
+            ("func markSuccess()", "缺少用户标记成功编号"),
+            ("func copyReport()", "缺少复制测试报告"),
+            ("for value in 0...255", "缺少 0x00~0xFF did 全扫描"),
+            ("testRunner.attach(self)", "测试运行器没有挂到控制器"),
+            ("telemetryRevision += 1", "缺少状态帧计数，自动判定会失效"),
+        ],
+        "WingControl/Views/DeviceView.swift": [
+            ("一键协议测试", "设备页缺少一键测试入口"),
+            ("WingTestPanel(runner:", "测试面板没有挂载"),
+            ("runner.start(mode: .standard)", "缺少开始标准矩阵按钮"),
+            ("runner.start(mode: .didScan)", "缺少 did 全扫描按钮"),
+            ("runner.markSuccess()", "面板缺少标记成功按钮"),
+            ("runner.copyReport()", "面板缺少复制报告按钮"),
+            ("Text(\"#\\(runner.currentIndex)\")", "面板缺少大号编号显示"),
+        ],
+    }
+    for rel, tokens in checks.items():
+        path = ROOT / rel
+        if not path.exists():
+            errors.append(f"{rel}: 文件缺失")
+            continue
+        src = path.read_text(encoding="utf-8")
+        for token, message in tokens:
+            if token not in src:
+                errors.append(f"{rel}: {message}（缺少 {token}）")
+    return errors
+
+
 def main() -> int:
     files = sorted(SWIFT_DIR.rglob("*.swift"))
     if not files:
@@ -491,14 +539,15 @@ def main() -> int:
     errors.extend(check_protocol_wiring())
     errors.extend(check_ui_wiring())
     errors.extend(check_text_contrast())
+    errors.extend(check_test_runner_wiring())
 
-    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面 / 文字对比度配置")
+    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面 / 文字对比度 / 测试矩阵配置")
     if errors:
         print("\n=== 发现 %d 个问题 ===" % len(errors))
         for err in errors:
             print("ERROR:", err)
         return 1
-    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面 / 文字对比度）")
+    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面 / 文字对比度 / 测试矩阵）")
     return 0
 
 

@@ -7,6 +7,7 @@ struct DeviceView: View {
     @EnvironmentObject private var controller: WingController
     @State private var didInput = ""
     @State private var rawFrameInput = ""
+    @State private var showTestPanel = false
 
     private var recentLogs: [LogEntry] { Array(controller.logs.prefix(20)) }
 
@@ -105,6 +106,24 @@ struct DeviceView: View {
                     .accessibilityHint("关闭后点火升降会返回操作失败")
                 } header: {
                     sectionHeader("调试选项")
+                }
+
+                Section {
+                    Text("自动依次尝试所有可能的发送组合：每个可写特征值 × 带/不带响应 × 帧内容与长度变体 × 指令 ID。每项停留约 2 秒，界面显示大号编号；看到尾翼动作就记下编号，或直接点面板里的「这个编号有效」。")
+                        .font(.caption)
+                        .foregroundStyle(Color.wingTextSecondary)
+                    statusRow(title: "已发现可写通道", value: "\(controller.ble.writeTargets.count) 个")
+                    statusRow(title: "全部特征值", value: controller.ble.allCharacteristicInfo)
+                    Button("打开一键协议测试") { showTestPanel = true }
+                        .foregroundStyle(Color.white)
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(Color.wingAccentGradient, in: Capsule())
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("打开一键协议测试")
+                        .accessibilityHint("自动遍历所有可能的蓝牙指令组合，只需记下有效的编号")
+                } header: {
+                    sectionHeader("一键协议测试（指令无反应时，直接用它定位）")
                 }
 
                 Section {
@@ -227,6 +246,10 @@ struct DeviceView: View {
             .tint(Color.wingAccent)
             .navigationTitle("设备")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showTestPanel) {
+                WingTestPanel(runner: controller.testRunner)
+                    .environmentObject(controller)
+            }
         }
     }
 
@@ -251,6 +274,295 @@ struct DeviceView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)：\(value)")
+    }
+}
+
+// MARK: - 一键协议测试面板
+
+/// 大号编号 + 逐项自动发送 + 一键标记成功 + 可复制报告。
+/// 所有文字显式着色，避免在强制深色下出现「按钮在、字是空白」。
+struct WingTestPanel: View {
+    @EnvironmentObject private var controller: WingController
+    @ObservedObject var runner: WingTestRunner
+    @Environment(\.dismiss) private var dismiss
+
+    private var successText: String {
+        runner.successIDs.sorted().map { "#\($0)" }.joined(separator: "  ")
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    headerCard
+                    controlCard
+                    resultCard
+                    tipCard
+                }
+                .padding(Spacing.sm)
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color.wingBackground)
+            .navigationTitle("一键协议测试")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("关闭") {
+                        runner.stop()
+                        dismiss()
+                    }
+                    .foregroundStyle(Color.wingAccent)
+                    .accessibilityLabel("关闭测试面板")
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    // MARK: 当前编号卡片
+
+    private var headerCard: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("#\(runner.currentIndex)")
+                    .font(.system(size: 56, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.wingAccent)
+                    .accessibilityLabel("当前测试编号 \(runner.currentIndex)")
+                Spacer(minLength: Spacing.xs)
+                Text("共 \(runner.cases.count) 项")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.wingTextSecondary)
+            }
+            progressBar
+            Text(runner.statusText)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.white)
+            if let item = runner.currentCase {
+                Text(item.title)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.white)
+                Text(item.frameHex)
+                    .font(.system(size: 15, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color.wingAccent)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(item.channelText)
+                    .font(.caption)
+                    .foregroundStyle(Color.wingTextSecondary)
+                Text(item.detail)
+                    .font(.caption)
+                    .foregroundStyle(Color.wingTextSecondary)
+            } else {
+                Text("点下方「开始标准矩阵」，然后盯住尾翼。看到动作就记下这个大号编号。")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.wingTextSecondary)
+            }
+            if !runner.successIDs.isEmpty {
+                Text("已标记成功：\(successText)")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color.wingDeviceTint)
+            }
+        }
+        .padding(Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.wingSurface,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.wingBorder, lineWidth: 1)
+        )
+    }
+
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.wingSurfaceAlt)
+                Capsule()
+                    .fill(Color.wingAccent)
+                    .frame(width: max(0, geo.size.width * CGFloat(runner.progress)))
+            }
+        }
+        .frame(height: 8)
+        .accessibilityLabel("测试进度 \(Int(runner.progress * 100))%")
+    }
+
+    // MARK: 控制按钮
+
+    private var controlCard: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text("运行控制")
+                .font(.headline)
+                .foregroundStyle(Color.white)
+            HStack(spacing: Spacing.xs) {
+                actionButton("开始标准矩阵", filled: true) { runner.start(mode: .standard) }
+                actionButton("did 全扫描", filled: false) { runner.start(mode: .didScan) }
+            }
+            HStack(spacing: Spacing.xs) {
+                actionButton(runner.isRunning ? "暂停" : "继续", filled: false) {
+                    if runner.isRunning { runner.pause() } else { runner.resume() }
+                }
+                actionButton("单步下一项", filled: false) { runner.stepForward() }
+            }
+            HStack(spacing: Spacing.xs) {
+                actionButton("重发当前编号", filled: false) { runner.restartCurrent() }
+                actionButton("停止 / 重置", filled: false) { runner.reset() }
+            }
+            Button(action: { runner.markSuccess() }) {
+                Text("★ 这个编号有效（尾翼动了）")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Color.white)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .background(Color.wingAccentGradient, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("标记当前编号有效")
+            .accessibilityHint("看到尾翼动作后点这里，编号会写进测试报告")
+            actionButton("复制测试报告（发给开发者）", filled: true) { runner.copyReport() }
+            if runner.reportCopied {
+                Text("报告已复制到剪贴板，粘贴到微信 / 备忘录即可发送。")
+                    .font(.caption)
+                    .foregroundStyle(Color.wingDeviceTint)
+            }
+        }
+        .padding(Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.wingSurface,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.wingBorder, lineWidth: 1)
+        )
+    }
+
+    private func actionButton(
+        _ title: String,
+        filled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.white)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(capsuleFill(filled: filled), in: Capsule())
+                .overlay(Capsule().stroke(Color.wingBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+
+    private func capsuleFill(filled: Bool) -> LinearGradient {
+        if filled { return Color.wingAccentGradient }
+        return LinearGradient(
+            colors: [Color.wingSurfaceAlt, Color.wingSurfaceAlt],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    // MARK: 执行记录
+
+    private var recentResults: [WingTestResult] {
+        Array(runner.results.reversed().prefix(40))
+    }
+
+    private func resultDetail(_ result: WingTestResult) -> String {
+        let verdict = result.telemetryChanged ? "状态帧变化" : "状态帧未变化"
+        return result.channel + " · " + verdict
+    }
+
+    private var resultCard: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            HStack {
+                Text("执行记录（最近 40 条）")
+                    .font(.headline)
+                    .foregroundStyle(Color.white)
+                Spacer(minLength: Spacing.xs)
+                Text("自动判定仅供参考")
+                    .font(.caption)
+                    .foregroundStyle(Color.wingTextSecondary)
+            }
+            if recentResults.isEmpty {
+                Text("还没有执行记录。完整明细都在「复制测试报告」里。")
+                    .font(.caption)
+                    .foregroundStyle(Color.wingTextSecondary)
+            } else {
+                ForEach(recentResults) { result in
+                    HStack(alignment: .top, spacing: Spacing.xs) {
+                        Text("#\(result.caseID)")
+                            .font(.subheadline.weight(.bold).monospaced())
+                            .foregroundStyle(result.userMarked ? Color.wingDeviceTint : Color.wingAccent)
+                            .frame(minWidth: 44, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(result.title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.white)
+                            Text(result.frameHex)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(Color.wingTextSecondary)
+                            Text(resultDetail(result))
+                                .font(.caption2)
+                                .foregroundStyle(
+                                    result.telemetryChanged
+                                        ? Color.wingDeviceTint
+                                        : Color.wingTextSecondary
+                                )
+                            if result.userMarked {
+                                Text("★ 已标记为有效")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Color.wingDeviceTint)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 4)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
+        .padding(Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.wingSurface,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.wingBorder, lineWidth: 1)
+        )
+    }
+
+    // MARK: 使用说明
+
+    private var tipCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("怎么记结果")
+                .font(.headline)
+                .foregroundStyle(Color.white)
+            Text("1. 先关闭「演示模式」并连上蓝牙，站在能看到尾翼的位置。\n2. 点「开始标准矩阵」，界面每约 2 秒换一个编号（#1、#2……）。\n3. 看到尾翼动了，立刻点「这个编号有效」，或把编号记在纸上。\n4. 跑完点「复制测试报告」粘贴发我，报告含每项的帧、写入通道与自动判定。\n5. 标准矩阵全无效时，再跑「did 全扫描」：0x00~0xFF 逐个试，约 3 分钟。")
+                .font(.caption)
+                .foregroundStyle(Color.wingTextSecondary)
+            Text("注意：状态帧未变化不等于一定失败，最终以你亲眼看到尾翼动作的编号为准。")
+                .font(.caption)
+                .foregroundStyle(Color.wingTextSecondary)
+            Text("当前连接：\(controller.connectionText)")
+                .font(.caption)
+                .foregroundStyle(Color.wingTextSecondary)
+        }
+        .padding(Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.wingSurface,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.wingBorder, lineWidth: 1)
+        )
     }
 }
 
