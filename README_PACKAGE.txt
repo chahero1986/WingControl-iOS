@@ -1,77 +1,55 @@
-尾翼控制器 — iOS 完整工程源码包
-打包时间：2026-11-09 10:35:33
+尾翼控制器 — iOS 完整工程源码包（CI 编译错误修复版）
+打包时间：2026-11-09 22:03:17
 源文件目录：D:\00ios软件开发\尾翼控制\WingControl-iOS
-文件总数：81（1,880,462 字节）
+文件总数：81（1958294 字节）
+※ 本包替代 10:35 / 11:11 / 11:33 / 18:59 四个旧包，那些已过时，请勿使用。
 
-==============================================================
-一、这个包里包含的全部已修复内容（按时间顺序）
-==============================================================
-1. [启动黑屏] SceneDelegate 先创建 UIWindow、装浅色占位控制器并 makeKeyAndVisible，
-   再加载 SwiftUI 根视图；Info.plist 补全 UISceneConfigurations。
-2. [图标空白] Info.plist 补 CFBundleIconName = AppIcon；打包脚本强制校验 Assets.car。
-3. [赛道模式显示不全] AnimatedImageView 加 maxWidth 约束与内容吸附优先级。
-4. [指令发出但设备无反应] 按设备状态帧第 2 字节自动同步 did 并持久化；
-   默认无响应写；设备页新增「协议诊断」（手写 did / 原始帧 / 重发 / 切换写入方式）。
-5. [CI] macos-15 runner、bash 3.2 兼容、Swift .frame 重载修复、LF 换行、IPA 结构校验。
+================================================================
+一、这一版解决什么
+================================================================
+GitHub Actions（Xcode 16.4 / macOS 15）归档失败，日志：
 
-==============================================================
-二、版本指纹：怎么确认自己拿到的是新包
-==============================================================
-解压后检查以下任一文件，缺一项就是旧包，不要使用：
-  · WingControl/Info.plist                      含 CFBundleIconName / AppIcon
-  · WingControl/App/WingControlApp.swift        含 LaunchPlaceholderController
-  · WingControl/Services/WingController.swift   含「按设备状态帧同步」与 sendRawFrame
-  · WingControl/Views/DeviceView.swift          含「协议诊断」
-  · WingControl/Views/TrackModeView.swift       含 maxWidth: .infinity
-  · tools/build-ipa.sh                          含 CFBundleIconName 校验
-安装后最直观的判断：桌面图标正常显示即新包；图标仍空白 = 装到旧 IPA。
+    WingController.swift:721:19: error: cannot use optional chaining on
+    non-optional value of type 'WingController'
+            controller?.cancelTestWrites()
+    ** ARCHIVE FAILED **  /  exit code 65
 
-==============================================================
-三、目录与使用方式（重要：不要多套一层文件夹）
-==============================================================
-解压后得到 WingControl-iOS/，它本身就是「仓库根目录 / 工程根目录」：
-  WingControl-iOS/
-    ├── WingControl.xcodeproj/      ← Xcode 打开这个
-    ├── WingControl/               ← Swift 源码、Info.plist、Assets.xcassets
-    ├── .github/workflows/         ← GitHub Actions 打包工作流
-    ├── tools/                     ← 打包脚本与两个自检脚本
-    ├── Preview/index.html         ← 电脑上直接打开的界面预览
-    ├── .gitattributes / .gitignore
-    └── README.md
+原因：WingTestRunner.start(mode:) 里先写了 `guard let controller = controller`，
+局部 controller 已被解包成非可选，紧接着又对它用可选链 `controller?.`，
+Swift 不允许。属性与局部绑定同名是根因。
 
-方式 A（Mac 本地）：解压 → 双击 WingControl.xcodeproj → 选真机 → Run。
-方式 B（GitHub 打包）：把 WingControl-iOS 目录「里面」的所有文件（含隐藏的 .github、
-  .gitattributes、.gitignore）推到仓库根目录，然后手动运行 Actions 的 Build IPA。
-  注意 .github 必须在仓库根，放到子目录工作流不会触发。
-方式 C（覆盖旧仓库）：把解压内容整体覆盖过去，务必确认 Info.plist 里已有
-  CFBundleIconName，再 commit & push，最后重新跑一次 Actions 生成新 IPA。
+修复：WingTestRunner 的弱引用属性由 controller 改名为 owner；
+所有 `guard let controller = owner` 保持不变；对可选属性的调用统一写 owner?.，
+局部非可选 controller 只用于直接调用。语义完全不变，功能与 18:59 版一致。
 
-⚠️ 旧 IPA 不会自动更新，必须重新打包并安装；安装新版前建议先卸载旧 App。
+================================================================
+二、改动文件
+================================================================
+· Services/WingController.swift   WingTestRunner 属性改名 owner，消除可选链编译错误
+· tools/verify_swift_sources.py     新增 check_optional_chaining_shadowing()：
+                                   扫描每个 guard let 所在代码块，拦截对非可选
+                                   局部绑定误用 `x?.`；回归用例已验证能抓到本错误
+· README.md                        静态预检说明、维护约定第 11 条、本轮修复记录
+未新增 / 删除 Swift 文件，project.pbxproj 无需改动；
+蓝牙协议、UI、一键协议测试矩阵全部保持 18:59 版状态。
 
-==============================================================
-四、解压后自检（Windows / macOS 均可，需 Python 3）
-==============================================================
-  cd WingControl-iOS
-  python tools/verify_swift_sources.py     # Mac 用 python3
-  python tools/verify_protocol.py          # 协议 24 项
-两项都应输出「通过」。FILE_CHECKSUMS.txt 是包内每个文件的 SHA256，
-可用于在另一台机器上核对文件是否完整、是否被旧文件覆盖。
+================================================================
+三、怎么编译安装（务必装这一版编译出的 IPA）
+================================================================
+1. 把 WingControl-iOS/ 整个目录作为仓库根目录 push 到 GitHub。
+2. Actions → 构建 IPA，等构建成功，下载最新 artifact（看运行时间，别拿旧 IPA）。
+3. 装好先进「设备 → 一键协议测试」，能看到面板说明装对了。
+4. 若之前解压过旧 zip，别把旧目录里的工程推上去（旧目录缺一键测试与本次修复）。
 
-==============================================================
-五、本次打包的逐文件指纹结果
-==============================================================
-  [OK] WingControl/Info.plist  含 CFBundleIconName, <string>AppIcon</string>, UISceneDelegateClassName
-  [OK] WingControl/App/WingControlApp.swift  含 LaunchPlaceholderController, class SceneDelegate, makeKeyAndVisible
-  [OK] WingControl/Services/WingController.swift  含 按设备状态帧同步, sendRawFrame, deviceID
-  [OK] WingControl/Services/BLEManager.swift  含 withoutResponse
-  [OK] WingControl/Views/DeviceView.swift  含 协议诊断
-  [OK] WingControl/Views/TrackModeView.swift  含 maxWidth: .infinity
-  [OK] WingControl/Views/Components.swift  含 defaultLow
-  [OK] Preview/index.html  含 syncDid, 界面加载中
-  [OK] tools/verify_swift_sources.py  含 CFBundleIconName, sendRawFrame
-  [OK] tools/build-ipa.sh  含 Assets.car, CFBundleIconName
-  [OK] tools/verify_protocol.py  含 device_id
-  [OK] .github/workflows/build-ipa.yml  含 macos-15
-  [OK] .gitattributes  含 eol=lf
+一键协议测试用法（与上一版相同）：
+1. 关闭「演示模式」，连上蓝牙，站在能看到尾翼的位置。
+2. 点「开始标准矩阵」（约 40 项，每项约 2 秒），盯住 56pt 大号编号 #1 #2 …
+3. 看到尾翼动，立刻点「★ 这个编号有效（尾翼动了）」或把编号记在纸上。
+4. 跑完点「复制测试报告（发给开发者）」，粘贴到对话里发我。
+5. 标准矩阵全无效时点「did 全扫描」：0x00~0xFF 共 256 项，约 3 分钟。
+※ 自动判定「状态帧是否变化」只是参考，最终以亲眼看到尾翼动作的编号为准。
 
-共 81 个源文件，全部按原路径打包，未包含 .git / build / 证书 / IPA / 临时文件。
+本机已通过：Swift 静态预检（14 文件 / 68 处 .frame，含新增可选链规则）、
+协议 24 项校验、build-ipa.sh 语法、全仓 LF + UTF-8、zip CRC 与逐文件 SHA256、
+解压后实跑两个自检脚本。本机是 Windows 无 Xcode / swiftc，
+真机效果仍需重新 push 编译安装后验证。

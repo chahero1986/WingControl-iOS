@@ -32,6 +32,8 @@
  10. 一键协议测试矩阵：蓝牙层要枚举全部可写特征值，控制器要能生成用例、
      逐项发送、标记成功、复制报告，设备页要有测试面板入口。删掉任一条，
      都会退回「只能靠猜」的状态。
+ 11. `guard let x = ...` 会把 x 解包成非可选，同一作用域里再写 `x?.foo()` 会报
+     "cannot use optional chaining on non-optional value"（CI 归档失败过一次）。
 
 用法：
     python tools/verify_swift_sources.py           # 检查全部 Swift 文件
@@ -524,6 +526,57 @@ def check_test_runner_wiring() -> list[str]:
     return errors
 
 
+def check_optional_chaining_shadowing(swift_files: list[Path]) -> list[str]:
+    """`guard let x = ...` 之后的 x 已是非可选，再写 `x?.` 会直接编译失败。
+
+    CI 日志曾报：WingController.swift:721 cannot use optional chaining on
+    non-optional value of type 'WingController'。Windows 本机没有 swiftc，
+    所以用花括号配对定位 guard 所在代码块，提前拦住这类写法。
+    """
+    errors: list[str] = []
+    # 右侧只认简单标识符路径（foo / self.foo），避免把复杂表达式误判
+    pattern = re.compile(r"\bguard\s+let\s+(\w+)\s*=\s*([\w.]+)\b")
+    for path in swift_files:
+        src = path.read_text(encoding="utf-8")
+        masked = mask_strings_and_comments(src)
+        for match in pattern.finditer(masked):
+            name = match.group(1)
+            # 找到包含该 guard 的最内层未闭合代码块
+            stack: list[int] = []
+            for idx, ch in enumerate(masked[:match.start()]):
+                if ch == "{":
+                    stack.append(idx)
+                elif ch == "}" and stack:
+                    stack.pop()
+            if not stack:
+                continue
+            # 从该块的起始花括号扫到闭合，得到局部绑定的有效范围
+            depth = 0
+            end = None
+            for idx in range(stack[-1], len(masked)):
+                if masked[idx] == "{":
+                    depth += 1
+                elif masked[idx] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = idx
+                        break
+            if end is None:
+                continue
+            body = masked[match.end():end]
+            # `self.foo?.` 是合法的属性访问，只抓裸的 `foo?.`
+            bad = re.search(r"(?<![\w.])" + re.escape(name) + r"\?\.", body)
+            if bad:
+                line = src[:match.start()].count("\n") + 1
+                bad_line = src[:match.end() + bad.start()].count("\n") + 1
+                errors.append(
+                    f"{path}:{line}: `{name}` 已被 guard let 解包为非可选，"
+                    f"第 {bad_line} 行的 `{name}?.` 会报 "
+                    f"cannot use optional chaining on non-optional value"
+                )
+    return errors
+
+
 def main() -> int:
     files = sorted(SWIFT_DIR.rglob("*.swift"))
     if not files:
@@ -540,14 +593,15 @@ def main() -> int:
     errors.extend(check_ui_wiring())
     errors.extend(check_text_contrast())
     errors.extend(check_test_runner_wiring())
+    errors.extend(check_optional_chaining_shadowing(files))
 
-    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面 / 文字对比度 / 测试矩阵配置")
+    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面 / 文字对比度 / 测试矩阵 / 可选链配置")
     if errors:
         print("\n=== 发现 %d 个问题 ===" % len(errors))
         for err in errors:
             print("ERROR:", err)
         return 1
-    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面 / 文字对比度 / 测试矩阵）")
+    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面 / 文字对比度 / 测试矩阵 / 可选链遮蔽）")
     return 0
 
 

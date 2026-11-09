@@ -687,13 +687,14 @@ final class WingTestRunner: ObservableObject {
     @Published private(set) var reportCopied = false
     @Published private(set) var environment = ""
 
-    private weak var controller: WingController?
+    // 属性名刻意不与局部 `guard let controller` 同名，避免对非可选局部常量误用 `?.`
+    private weak var owner: WingController?
     private var pending: DispatchWorkItem?
     private var baselineHex: String?
     private var baselineRevision = 0
     private var singleStepMode = false
 
-    func attach(_ controller: WingController) { self.controller = controller }
+    func attach(_ controller: WingController) { owner = controller }
 
     var currentCase: WingTestCase? {
         guard currentIndex > 0, currentIndex <= cases.count else { return nil }
@@ -708,7 +709,7 @@ final class WingTestRunner: ObservableObject {
     // MARK: 运行控制
 
     func start(mode: WingTestMode) {
-        guard let controller = controller else { return }
+        guard let controller = owner else { return }
         guard !controller.demoMode else {
             statusText = "请先关闭演示模式"
             return
@@ -718,7 +719,7 @@ final class WingTestRunner: ObservableObject {
             return
         }
         pending?.cancel()
-        controller?.cancelTestWrites()
+        owner?.cancelTestWrites()
         singleStepMode = false
         self.mode = mode
         cases = controller.buildTestCases(mode: mode)
@@ -743,8 +744,8 @@ final class WingTestRunner: ObservableObject {
         currentIndex += 1
         let item = cases[currentIndex - 1]
         statusText = "正在执行 #\(item.id) / \(cases.count)"
-        baselineHex = controller?.lastTelemetryHex
-        baselineRevision = controller?.telemetryRevision ?? 0
+        baselineHex = owner?.lastTelemetryHex
+        baselineRevision = owner?.telemetryRevision ?? 0
         let work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             self.execute(item)
@@ -754,7 +755,7 @@ final class WingTestRunner: ObservableObject {
     }
 
     private func execute(_ item: WingTestCase) {
-        guard let controller = controller else { return }
+        guard let controller = owner else { return }
         if item.resubscribe { controller.resubscribeNotifyForTest() }
         controller.sendTestFrames(
             item.frames,
@@ -772,7 +773,7 @@ final class WingTestRunner: ObservableObject {
     }
 
     private func evaluate(_ item: WingTestCase) {
-        guard let controller = controller else { return }
+        guard let controller = owner else { return }
         var changed = false
         if controller.telemetryRevision > baselineRevision,
            let now = controller.lastTelemetryHex {
@@ -799,11 +800,11 @@ final class WingTestRunner: ObservableObject {
 
     func pause() {
         pending?.cancel()
-        controller?.cancelTestWrites()
+        owner?.cancelTestWrites()
         isRunning = false
         singleStepMode = false
         statusText = "已暂停"
-        controller?.appendLog("一键协议测试已暂停")
+        owner?.appendLog("一键协议测试已暂停")
     }
 
     func resume() {
@@ -820,10 +821,10 @@ final class WingTestRunner: ObservableObject {
 
     func stepForward() {
         pending?.cancel()
-        controller?.cancelTestWrites()
+        owner?.cancelTestWrites()
         isRunning = false
         if cases.isEmpty {
-            guard let controller = controller else { return }
+            guard let controller = owner else { return }
             cases = controller.buildTestCases(mode: mode)
             environment = controller.testEnvironmentText()
         }
@@ -838,7 +839,7 @@ final class WingTestRunner: ObservableObject {
 
     func restartCurrent() {
         pending?.cancel()
-        controller?.cancelTestWrites()
+        owner?.cancelTestWrites()
         isRunning = false
         guard currentIndex > 0 else {
             statusText = "尚未开始测试"
@@ -851,7 +852,7 @@ final class WingTestRunner: ObservableObject {
 
     func stop() {
         pending?.cancel()
-        controller?.cancelTestWrites()
+        owner?.cancelTestWrites()
         isRunning = false
         singleStepMode = false
     }
@@ -879,7 +880,7 @@ final class WingTestRunner: ObservableObject {
         if let index = results.lastIndex(where: { $0.caseID == item.id }) {
             results[index].userMarked = true
         }
-        controller?.appendLog("★ 用户标记：测试 #\(item.id) 有效 · \(item.frameHex)")
+        owner?.appendLog("★ 用户标记：测试 #\(item.id) 有效 · \(item.frameHex)")
         statusText = "已标记 #\(item.id) 成功"
     }
 
@@ -917,7 +918,7 @@ final class WingTestRunner: ObservableObject {
         UIPasteboard.general.string = reportText()
         reportCopied = true
         statusText = "报告已复制，可直接粘贴发送"
-        controller?.appendLog("测试报告已复制到剪贴板")
+        owner?.appendLog("测试报告已复制到剪贴板")
     }
 
     private func finish() {
@@ -926,6 +927,6 @@ final class WingTestRunner: ObservableObject {
         singleStepMode = false
         isFinished = true
         statusText = "全部完成 · 共 \(cases.count) 项"
-        controller?.appendLog("=== 一键协议测试结束：用户标记 \(successIDs.count) 项成功 ===")
+        owner?.appendLog("=== 一键协议测试结束：用户标记 \(successIDs.count) 项成功 ===")
     }
 }

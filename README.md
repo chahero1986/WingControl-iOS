@@ -109,7 +109,7 @@ python tools/verify_swift_sources.py     # Swift 源码静态检查
 python tools/verify_protocol.py          # 协议帧与校验规则
 ```
 
-`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）、**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）、**文字对比度**（禁止裸系统语义色、提示框必须自定义、分组标题与两行重发按钮必须有确定颜色）和**一键测试矩阵**（入口、运行器、编号、报告、特征值枚举）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
+`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）、**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）、**文字对比度**（禁止裸系统语义色、提示框必须自定义、分组标题与两行重发按钮必须有确定颜色）和**一键测试矩阵**（入口、运行器、编号、报告、特征值枚举）、**可选链遮蔽**（`guard let` 解包后同作用域不得再写 `x?.`）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
 
 首次真实编译（Xcode 16.4 / macOS 15 runner）报过 `DailyModeView.swift:42: extra argument 'minHeight' in call`：SwiftUI 的 `frame` 有两个重载——`frame(width:height:alignment:)` 与 `frame(minWidth:…:maxHeight:alignment:)`——`width`/`height` 不能和 `min*`/`max*` 同用。现在统一改为 `.frame(minWidth: 44, minHeight: 44)`，既合法又能随 Dynamic Type 放大。
 
@@ -124,6 +124,7 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 > 8. 手写 `Info.plist` 必须保留 `CFBundleIconName = AppIcon`，`SceneDelegate` 必须「先 `makeKeyAndVisible()` 再构造 `WingController` / SwiftUI 根视图」。删掉前者桌面图标空白，顺序反过来则窗口可能根本不上屏而黑屏（静态预检与打包脚本都会拦截）。
 > 9. 界面固定深色：不要删 `UIUserInterfaceStyle=Dark` 与 `.preferredColorScheme(.dark)`，不要把底部栏改回系统 `TabView`、不要把选中按钮改回纯 `.accentColor`、不要恢复赛道演示动画或旧 `Image("Logo")`——这些都会让「选中看不见 / 背景不协调」复发（静态预检会拦截）；
 > 10. 所有文字显式着色：禁止裸 `.foregroundStyle(.secondary)` / `.tertiary` / `.primary`，提示框必须用 `WingAlertOverlay` 而不是系统 `.alert`，List 行要有 `.listRowBackground(Color.wingSurface)`、分组标题要有显式颜色的 `sectionHeader()`。改回系统语义色会让弹窗按钮、分组标题和两行重发按钮变成「按钮在、字是空白」（静态预检会拦截）。
+> 11. `guard let x = ...` 之后 `x` 已是非可选，同作用域内不能写 `x?.foo()`（会报 `cannot use optional chaining on non-optional value`）。可选属性请写成 `self.x?.foo()`，或在 `WingTestRunner` 里统一用不与局部绑定同名的 `owner`（静态预检会拦截）。
 
 ### 启动黑屏的修复说明
 
@@ -279,6 +280,21 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 | `tools/verify_swift_sources.py` | 新增 `check_test_runner_wiring()`，拦截测试矩阵被误删 |
 
 **注意**：`状态帧未变化` 只是辅助判定，不能作为失败依据——尾翼机械动作可能不反馈到状态帧。**以亲眼看到动作的编号为准**。测试期间每条命令也会写进「最近命令日志」，可截图辅助核对。
+
+### CI 编译错误修复（2026-11-09 第四轮）
+
+Xcode 16.4 归档时报错：
+
+```
+WingController.swift:721:19: error: cannot use optional chaining on non-optional value of type 'WingController'
+        controller?.cancelTestWrites()
+```
+
+原因：`WingTestRunner.start(mode:)` 里先写了 `guard let controller = controller`，局部 `controller` 已是**非可选**，紧接着又对它用可选链 `controller?.`，Swift 直接编译失败。属性与局部绑定同名是根因。
+
+修复：`WingTestRunner` 的弱引用属性由 `controller` 改名为 `owner`，所有 `guard let controller = owner` 保持不变，对可选属性的调用统一改成 `owner?.`；局部非可选 `controller` 只用于直接调用（`controller.buildTestCases(...)` 等）。语义不变，且不再有同名遮蔽。
+
+同时在 `tools/verify_swift_sources.py` 新增 `check_optional_chaining_shadowing()`：按花括号配对定位每个 `guard let` 所在代码块，检查同作用域里是否出现对该局部绑定的裸 `x?.`（`self.x?.` 属合法属性访问，会排除）。本机 Windows 无 `swiftc`，这类编译期错误现在能在 push 之前拦住。
 
 ---
 
