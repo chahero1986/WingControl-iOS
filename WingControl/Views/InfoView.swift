@@ -80,6 +80,8 @@ struct InfoView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.wingBackground)
             .navigationTitle("说明")
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -95,7 +97,7 @@ private struct InfoRow: View {
         HStack(alignment: .top, spacing: Spacing.sm) {
             Image(systemName: icon)
                 .font(.title3)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.wingAccent)
                 .frame(width: 28)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {

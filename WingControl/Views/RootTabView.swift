@@ -4,27 +4,51 @@ struct RootTabView: View {
     @EnvironmentObject private var controller: WingController
     @State private var selection: Tab = .control
 
-    enum Tab: Hashable {
+    enum Tab: String, CaseIterable, Identifiable, Hashable {
         case control, device, info
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .control: return "控制"
+            case .device: return "设备"
+            case .info: return "说明"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .control: return "slider.horizontal.3"
+            case .device: return "antenna.radiowaves.left.and.right"
+            case .info: return "info.circle.fill"
+            }
+        }
+
+        /// 三个标签各自一个高饱和色，选中时图标与文字都一定看得见
+        var tint: Color {
+            switch self {
+            case .control: return .wingControlTint
+            case .device: return .wingDeviceTint
+            case .info: return .wingInfoTint
+            }
+        }
     }
 
     var body: some View {
-        TabView(selection: $selection) {
-            ControlView(openDevices: { selection = .device })
-                .tabItem { Label("控制", systemImage: "slider.horizontal.3") }
-                .tag(Tab.control)
-                .accessibilityLabel("控制，标签页")
-
-            DeviceView()
-                .tabItem { Label("设备", systemImage: "antenna.radiowaves.left.and.right") }
-                .tag(Tab.device)
-                .accessibilityLabel("设备，标签页")
-
-            InfoView()
-                .tabItem { Label("说明", systemImage: "info.circle") }
-                .tag(Tab.info)
-                .accessibilityLabel("说明，标签页")
+        Group {
+            switch selection {
+            case .control:
+                ControlView(openDevices: { selection = .device })
+            case .device:
+                DeviceView()
+            case .info:
+                InfoView()
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.wingBackground.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) { tabBar }
         .sheet(item: $controller.sheet) { sheet in
             SheetHost(sheet: sheet)
                 .environmentObject(controller)
@@ -45,6 +69,51 @@ struct RootTabView: View {
                     secondaryButton: .cancel(Text("取消"))
                 )
             }
+        }
+    }
+
+    /// 自定义底部栏：不用系统 TabView 的 tint，避免选中项图标「消失」；
+    /// 每个标签有独立的彩色高亮 + 半透明色块 + 描边。
+    private var tabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(Tab.allCases) { tab in
+                Button {
+                    selection = tab
+                    Haptics.selection()
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 21, weight: .semibold))
+                            .foregroundStyle(selection == tab ? tab.tint : Color.wingTabInactive)
+                        Text(tab.title)
+                            .font(.caption2.weight(selection == tab ? .bold : .medium))
+                            .foregroundStyle(selection == tab ? tab.tint : Color.wingTabInactive)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(selection == tab ? tab.tint.opacity(0.18) : Color.clear)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(
+                                selection == tab ? tab.tint.opacity(0.55) : Color.clear,
+                                lineWidth: 1
+                            )
+                    )
+                    .padding(.horizontal, 8)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(tab.title)，标签页")
+                .accessibilityValue(selection == tab ? "已选中" : "未选中")
+            }
+        }
+        .padding(.vertical, 6)
+        .background(Color.wingTabBar)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.wingBorder.opacity(0.7))
+                .frame(height: 1)
         }
     }
 }
@@ -75,7 +144,7 @@ struct SheetHost: View {
                 }
                 .padding(Spacing.sm)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(Color.wingBackground)
             .navigationTitle(sheet.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -85,6 +154,7 @@ struct SheetHost: View {
                 }
             }
         }
+        .background(Color.wingBackground)
         .presentationDetents([.medium, .large], selection: $selectedDetent)
         .presentationDragIndicator(.visible)
     }
@@ -111,16 +181,18 @@ private struct AutoHintContent: View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Text("车速降低小于指定码数后触发尾翼下降")
                 .font(.body)
+                .foregroundStyle(.white)
             Text("车速提高大于指定码数后触发尾翼升起")
                 .font(.body)
+                .foregroundStyle(.white)
             Divider()
             Text("注：降速加速临界范围总大于 20 码")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.wingTextSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Spacing.sm)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        .background(Color.wingSurface, in: RoundedRectangle(cornerRadius: 12))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("自动升降模式说明：车速降低小于指定码数后触发尾翼下降，车速提高大于指定码数后触发尾翼升起。降速加速临界范围总大于 20 码。")
     }
@@ -134,10 +206,12 @@ private struct TrackHintContent: View {
             Image("TrackDialog")
                 .resizable()
                 .scaledToFit()
-                .frame(maxHeight: 200)
+                .frame(maxWidth: .infinity, maxHeight: 200)
+                .clipped()
                 .accessibilityLabel("赛道模式示意图")
             Text("车辆大幅度降速(加速度a由正转为负，当a触达设定条件时)将使尾翼进一步升起(持续5s)，增加持续时间内车体的下压力，进而加强减速时车身抓地力。")
                 .font(.body)
+                .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button("我知道了") { dismiss() }
                 .buttonStyle(WingCapsuleButtonStyle(filled: true))
@@ -155,10 +229,12 @@ private struct IgnitionSuccessContent: View {
             Image("FireSuccess")
                 .resizable()
                 .scaledToFit()
-                .frame(maxHeight: 180)
+                .frame(maxWidth: .infinity, maxHeight: 180)
+                .clipped()
                 .accessibilityLabel("操作成功")
             Text("成功执行了一次点火升降后的升降动作")
                 .font(.body)
+                .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
             AnimatedImageView(prefix: "FireAnim", frameCount: 4, duration: 1.2)
                 .frame(maxWidth: .infinity, minHeight: 100, maxHeight: 100)
@@ -180,13 +256,15 @@ private struct IgnitionFailureContent: View {
             Image("FireFailure")
                 .resizable()
                 .scaledToFit()
-                .frame(maxHeight: 180)
+                .frame(maxWidth: .infinity, maxHeight: 180)
+                .clipped()
                 .accessibilityLabel("操作失败")
             Text("点火升降操作失败！")
                 .font(.title3.weight(.bold))
+                .foregroundStyle(.white)
             Text("需在车内安装实体按键才可完成操作")
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.wingTextSecondary)
             Button("我知道了") { dismiss() }
                 .buttonStyle(WingCapsuleButtonStyle(filled: true))
                 .frame(maxWidth: .infinity)

@@ -23,6 +23,9 @@
   7. 指令链路：状态帧第 2 字节是设备认可的 did，收到后必须同步到后续命令帧；
      写入方式要能在「无响应写 / 带响应写」之间切换；设备页保留协议诊断入口。
      删掉任一条都会退回「能连上、写入回调成功、设备却毫无反应」的状态。
+  8. 深色主题与界面约定：强制深色、底部三个标签用各自彩色高亮、选中按钮用
+     彩色渐变 + 白字、底部品牌栏用新徽标、赛道模式不再有演示动画。
+     启动屏可以是深灰，但不能是纯黑；占位控制器必须有浅色文字用于区分真黑屏。
 
 用法：
     python tools/verify_swift_sources.py           # 检查全部 Swift 文件
@@ -226,6 +229,11 @@ def check_launch_wiring(swift_files: list[Path]) -> list[str]:
         )
     if "UILaunchScreen" not in info:
         errors.append(f"{rel_plist}: 缺少 UILaunchScreen")
+    if info.get("UIUserInterfaceStyle") != "Dark":
+        errors.append(
+            f"{rel_plist}: 缺少 UIUserInterfaceStyle=Dark，"
+            "UIKit 启动阶段会跟随系统浅色外观，和全黑主题不一致"
+        )
     if info.get("CFBundleIconName") != "AppIcon":
         errors.append(
             f"{rel_plist}: 缺少 CFBundleIconName=AppIcon；GENERATE_INFOPLIST_FILE=NO "
@@ -258,10 +266,13 @@ def check_launch_wiring(swift_files: list[Path]) -> list[str]:
             + 0.7152 * float(comp["g"])
             + 0.0722 * float(comp["b"])
         )
-        if luminance < 0.5:
+        # 深色主题下启动屏用 #1C1C1E 深灰即可；只要不是纯黑，
+        # 配合占位控制器的浅色文字就能和「真黑屏」区分开。
+        if luminance < 0.04:
             errors.append(
-                "LaunchBackground.colorset: 启动屏颜色过暗（亮度 "
-                f"{luminance:.2f}），启动失败时无法与黑屏区分"
+                "LaunchBackground.colorset: 启动屏是纯黑（亮度 "
+                f"{luminance:.2f}），与启动失败时的黑屏无法区分；"
+                "请使用深灰底并在占位控制器里显示浅色文字"
             )
     except Exception as exc:  # noqa: BLE001
         errors.append(f"LaunchBackground.colorset: 校验失败（{exc}）")
@@ -276,6 +287,7 @@ def check_launch_wiring(swift_files: list[Path]) -> list[str]:
         "makeKeyAndVisible",
         "UIHostingController",
         "LaunchPlaceholderController",
+        "label.textColor = .white",
     ):
         if token not in entry_src:
             errors.append(f"App/WingControlApp.swift: 启动入口缺少 {token}")
@@ -336,6 +348,67 @@ def check_protocol_wiring() -> list[str]:
     return errors
 
 
+def check_ui_wiring() -> list[str]:
+    """校验深色主题 / 彩色选中态 / 新徽标 / 赛道动画已移除。"""
+    errors: list[str] = []
+    checks = {
+        "WingControl/Theme/Theme.swift": [
+            ("static let wingBackground", "缺少深色页面背景色"),
+            ("static var wingAccentGradient", "缺少选中态彩色渐变"),
+            ("static let wingControlTint", "缺少控制标签的彩色"),
+            ("static let wingDeviceTint", "缺少设备标签的彩色"),
+            ("static let wingInfoTint", "缺少说明标签的彩色"),
+        ],
+        "WingControl/App/WingControlApp.swift": [
+            ("preferredColorScheme(.dark)", "未强制深色，系统语义色会变回浅色"),
+            ("WingAppearance.configure()", "未配置分段控件 / 开关的彩色选中态"),
+        ],
+        "WingControl/Views/RootTabView.swift": [
+            ("safeAreaInset(edge: .bottom", "底部标签栏不是自定义彩色栏"),
+            ("Tab.allCases", "缺少三个标签的枚举遍历"),
+            ("tab.tint", "标签选中时没有使用各自的彩色"),
+        ],
+        "WingControl/Views/Components.swift": [
+            ("Color.wingAccentGradient", "选中按钮没有用彩色渐变，选中的字会看不清"),
+        ],
+        "WingControl/Views/ControlView.swift": [
+            ("WingBrandBadge()", "底部品牌栏没有换成新徽标"),
+            ("Color.wingBackground", "控制页背景不是黑色"),
+        ],
+    }
+    for rel, tokens in checks.items():
+        path = ROOT / rel
+        if not path.exists():
+            errors.append(f"{rel}: 文件缺失")
+            continue
+        src = path.read_text(encoding="utf-8")
+        for token, message in tokens:
+            if token not in src:
+                errors.append(f"{rel}: {message}（缺少 {token}）")
+
+    control_src = (ROOT / "WingControl/Views/ControlView.swift").read_text(encoding="utf-8")
+    if 'Image("Logo")' in control_src:
+        errors.append("ControlView.swift: 仍在使用旧小程序的黑白 Logo 素材")
+
+    track_src = (ROOT / "WingControl/Views/TrackModeView.swift").read_text(encoding="utf-8")
+    for token in ("AnimatedImageView", "TrackStatus", "TrackAnim", "playAnimation"):
+        if token in track_src:
+            errors.append(f"TrackModeView.swift: 赛道演示动画已移除，不应再出现 {token}")
+
+    html = (ROOT / "Preview/index.html").read_text(encoding="utf-8")
+    for token, message in (
+        ("--t-control", "预览页缺少三个标签各自的彩色"),
+        ('class="logo"', "预览页底部品牌栏没有换成新徽标"),
+        ("linear-gradient(90deg,var(--accent)", "预览页选中态没有用彩色渐变"),
+    ):
+        if token not in html:
+            errors.append(f"Preview/index.html: {message}（缺少 {token}）")
+    for token in ('class="anim"', 'class="statusimg"'):
+        if token in html:
+            errors.append(f"Preview/index.html: 赛道演示动画已移除，不应再渲染 {token}")
+    return errors
+
+
 def main() -> int:
     files = sorted(SWIFT_DIR.rglob("*.swift"))
     if not files:
@@ -349,14 +422,15 @@ def main() -> int:
         frames += len(list(find_frame_calls(mask_strings_and_comments(path.read_text(encoding="utf-8")))))
     errors.extend(check_launch_wiring(files))
     errors.extend(check_protocol_wiring())
+    errors.extend(check_ui_wiring())
 
-    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动链路与指令链路配置")
+    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面链路配置")
     if errors:
         print("\n=== 发现 %d 个问题 ===" % len(errors))
         for err in errors:
             print("ERROR:", err)
         return 1
-    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路）")
+    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面）")
     return 0
 
 

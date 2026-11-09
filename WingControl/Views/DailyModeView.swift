@@ -125,6 +125,7 @@ private struct AutoCard: View {
             HStack(spacing: Spacing.xs) {
                 Text("AUTO")
                     .font(.title2.weight(.bold))
+                    .foregroundStyle(Color.wingAccent)
                 InfoButton(label: "自动升降模式说明") {
                     controller.sheet = .autoHint
                 }
@@ -185,8 +186,12 @@ private struct AutoCard: View {
         }
         .padding(Spacing.sm)
         .background(
-            Color(uiColor: .secondarySystemGroupedBackground),
+            Color.wingSurface,
             in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.wingBorder.opacity(0.8), lineWidth: 1)
         )
     }
 }

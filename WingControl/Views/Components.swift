@@ -37,19 +37,31 @@ struct WingCapsuleButtonStyle: ButtonStyle {
             .foregroundStyle(foreground)
             .frame(minHeight: 44)
             .padding(.horizontal, Spacing.sm)
-            .background(background, in: Capsule())
+            .background(capsule)
+            .overlay(
+                Capsule().stroke(
+                    active || filled ? Color.white.opacity(0.35) : Color.wingBorder.opacity(0.9),
+                    lineWidth: 1
+                )
+            )
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Capsule())
     }
 
+    /// 选中态一律「彩色渐变 + 纯白粗体字」：不依赖系统 accentColor，
+    /// 也不会出现「选中后文字与背景同色、字看不见」的情况。
     private var foreground: Color {
         if active || filled { return .white }
-        return onDark ? .white : .primary
+        return .white.opacity(0.92)
     }
 
-    private var background: Color {
-        if active || filled { return .accentColor }
-        return onDark ? Color.white.opacity(0.14) : Color(uiColor: .tertiarySystemFill)
+    @ViewBuilder
+    private var capsule: some View {
+        if active || filled {
+            Capsule().fill(Color.wingAccentGradient)
+        } else {
+            Capsule().fill(onDark ? Color.white.opacity(0.14) : Color.wingSurfaceAlt)
+        }
     }
 }
 
@@ -64,16 +76,16 @@ struct ConnectionBanner: View {
             HStack(spacing: Spacing.xs) {
                 Image(systemName: controller.isConnected ? "bolt.horizontal.circle.fill" : "bolt.horizontal.circle")
                     .font(.title3)
-                    .foregroundStyle(controller.isConnected ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(controller.isConnected ? Color.wingAccent : Color.wingTextSecondary)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(controller.connectionText)
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.white)
                     Text(controller.isConnected ? "点击管理已连接的设备" : "点击前往「设备」页搜索并连接")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.wingTextSecondary)
                 }
 
                 Spacer(minLength: Spacing.xs)
@@ -85,8 +97,12 @@ struct ConnectionBanner: View {
             .padding(Spacing.sm)
             .frame(minHeight: 56)
             .background(
-                Color(uiColor: .secondarySystemGroupedBackground),
+                Color.wingSurface,
                 in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.wingBorder.opacity(0.8), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -131,11 +147,11 @@ struct SectionHeader: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.headline)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.white)
             if let subtitle {
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.wingTextSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -266,7 +282,7 @@ struct SpeedWheelPair: UIViewRepresentable {
             label.text = component == 0 ? "\(downValues[row]) km/h" : "\(upValues[row]) km/h"
             label.font = .preferredFont(forTextStyle: .body)
             label.adjustsFontForContentSizeCategory = true
-            label.textColor = .label
+            label.textColor = .white
             label.textAlignment = .center
             label.isAccessibilityElement = true
             label.accessibilityLabel = label.text

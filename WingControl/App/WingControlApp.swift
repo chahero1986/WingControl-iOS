@@ -1,6 +1,39 @@
 import SwiftUI
 import UIKit
 
+// MARK: - 全局控件外观（深色主题 + 彩色选中态）
+
+/// 手写 Info.plist + 手写工程不会自动带 Xcode 模板的外观设置，
+/// 这里显式配置系统控件，避免「选中后文字和背景同色看不见」。
+enum WingAppearance {
+    static func configure() {
+        let accent = UIColor(Color.wingAccent)
+
+        let segmented = UISegmentedControl.appearance()
+        segmented.selectedSegmentTintColor = accent
+        segmented.setTitleTextAttributes(
+            [.foregroundColor: UIColor.white, .font: UIFont.systemFont(ofSize: 13, weight: .semibold)],
+            for: .selected
+        )
+        segmented.setTitleTextAttributes(
+            [.foregroundColor: UIColor(white: 0.78, alpha: 1), .font: UIFont.systemFont(ofSize: 13, weight: .medium)],
+            for: .normal
+        )
+
+        UISwitch.appearance().onTintColor = accent
+
+        let navigation = UINavigationBarAppearance()
+        navigation.configureWithOpaqueBackground()
+        navigation.backgroundColor = UIColor(Color.wingBackground)
+        navigation.titleTextAttributes = [.foregroundColor: UIColor.white]
+        navigation.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+        UINavigationBar.appearance().standardAppearance = navigation
+        UINavigationBar.appearance().scrollEdgeAppearance = navigation
+        UINavigationBar.appearance().compactAppearance = navigation
+        UINavigationBar.appearance().tintColor = UIColor(Color.wingAccent)
+    }
+}
+
 // MARK: - 应用入口（UIKit 生命周期 + SwiftUI 界面）
 
 /// 本工程的 Info.plist 与 pbxproj 均为手工生成，不走 Xcode 的
@@ -18,6 +51,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
+        WingAppearance.configure()
         NSLog("[WingControl] 1/4 application didFinishLaunching")
         return true
     }
@@ -25,7 +59,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
         configurationForConnecting connectingSceneSession: UISceneSession,
-        options: UIScene.ConnectionOptions
+        options connectionOptions: UIScene.ConnectionOptions
     ) -> UISceneConfiguration {
         // 名称与 Info.plist 的 UISceneConfigurations 保持一致；
         // delegateClass 用类型而非字符串，不受 Product Module Name 影响。
@@ -58,9 +92,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
 
         // 关键顺序：先建立一个必定可见的窗口并上屏，再加载状态机与 SwiftUI 根视图。
-        // 若后续环节异常，用户看到的是浅色占位界面而不是整屏黑，Console 也能据日志定位。
+        // 占位界面是「深灰底 + 浅色文字」，与全黑主题协调；真正的黑屏是纯黑且没有字，
+        // 两者仍能一眼区分，Console 也能据日志定位。
         let window = UIWindow(windowScene: windowScene)
-        window.backgroundColor = .systemBackground
+        window.backgroundColor = UIColor(Color.wingBackground)
         window.rootViewController = LaunchPlaceholderController()
         window.makeKeyAndVisible()
         self.window = window
@@ -77,31 +112,45 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 // MARK: - 启动占位界面
 
-/// 纯 UIKit 占位：浅色语义色背景 + 一行 Dynamic Type 文字，无交互、无全屏 spinner。
+/// 纯 UIKit 占位：深灰底 + 一行浅色 Dynamic Type 文字，无交互、无全屏 spinner。
 /// 只用于区分「窗口已创建」与「SwiftUI 界面加载失败」，正常启动下一闪而过。
 /// 工程保持零第三方依赖，这里用原生 NSLayoutConstraint 而不是引入 SnapKit。
 private final class LaunchPlaceholderController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = UIColor(Color.wingSurface)
+
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
 
         let label = UILabel()
         label.text = "尾翼控制器"
         label.font = .preferredFont(forTextStyle: .title2)
         label.adjustsFontForContentSizeCategory = true
-        label.textColor = .label
+        label.textColor = .white
         label.textAlignment = .center
         label.accessibilityLabel = "尾翼控制器"
-        label.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(label)
+        stack.addArrangedSubview(label)
+
+        let detail = UILabel()
+        detail.text = "正在启动…"
+        detail.font = .preferredFont(forTextStyle: .footnote)
+        detail.adjustsFontForContentSizeCategory = true
+        detail.textColor = UIColor(white: 0.72, alpha: 1)
+        detail.textAlignment = .center
+        stack.addArrangedSubview(detail)
 
         let guide = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: guide.centerYAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -16)
+            stack.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: guide.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -16)
         ])
     }
 }
@@ -111,6 +160,8 @@ private final class LaunchPlaceholderController: UIViewController {
 struct WingRootView: View {
     var body: some View {
         RootTabView()
-            .background(Color(uiColor: .systemBackground))
+            .background(Color.wingBackground.ignoresSafeArea())
+            // 强制深色：让 List / NavigationStack / 语义色与全黑主题一致
+            .preferredColorScheme(.dark)
     }
 }

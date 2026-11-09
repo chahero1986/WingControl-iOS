@@ -182,6 +182,8 @@ struct DeviceView: View {
                         .accessibilityLabel("清空命令日志")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.wingBackground)
             .navigationTitle("设备")
             .navigationBarTitleDisplayMode(.inline)
         }

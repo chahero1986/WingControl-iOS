@@ -1,8 +1,9 @@
 import SwiftUI
 
+/// 赛道模式：按用户要求移除「演示动画 / 演示视频」模块，
+/// 只保留刹车幅度设定与强 / 中 / 弱三档。
 struct TrackModeView: View {
     @EnvironmentObject private var controller: WingController
-    @State private var playAnimation = true
 
     private struct TrackOption: Identifiable {
         let id: Int
@@ -16,73 +17,43 @@ struct TrackModeView: View {
     ]
 
     var body: some View {
-        VStack(spacing: Spacing.sm) {
-            DarkCanvas {
-                VStack(spacing: Spacing.xs) {
-                    Button {
-                        playAnimation.toggle()
-                        Haptics.selection()
-                    } label: {
-                        AnimatedImageView(
-                            prefix: "TrackAnim",
-                            frameCount: 8,
-                            duration: 1.6,
-                            play: playAnimation
-                        )
-                        // 动画帧原图 710pt 宽：必须同时约束宽高，否则卡片会横向溢出屏幕
-                        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 150)
-                        .clipped()
-                        .accessibilityHidden(true)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .accessibilityLabel("赛道模式动画")
-                    .accessibilityHint(playAnimation ? "双击暂停动画" : "双击播放动画")
-
-                    Image("TrackStatus")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: 56)
-                        .clipped()
-                        .accessibilityLabel("赛道模式启用中，尾翼已升起")
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            HStack(spacing: Spacing.xs) {
+                SectionHeader("刹车幅度设定", subtitle: "幅度越强越容易触发")
+                Spacer(minLength: Spacing.xs)
+                InfoButton(label: "赛道模式说明") {
+                    controller.sheet = .trackHint
                 }
-                .frame(maxWidth: .infinity)
+                .fixedSize(horizontal: true, vertical: false)
             }
+            .frame(maxWidth: .infinity)
 
-            VStack(alignment: .leading, spacing: Spacing.sm) {
-                HStack(spacing: Spacing.xs) {
-                    SectionHeader("刹车幅度设定", subtitle: "幅度越强越容易触发")
-                    Spacer(minLength: Spacing.xs)
-                    InfoButton(label: "赛道模式说明") {
-                        controller.sheet = .trackHint
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
+            Text("a = \(controller.state.intensity) m/s²")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(Color.wingAccent)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("当前加速度阈值 \(controller.state.intensity) 米每二次方秒")
+
+            HStack(spacing: Spacing.xs) {
+                ForEach(options) { option in
+                    Button(option.title) { controller.setTrackType(option.id) }
+                        .buttonStyle(WingCapsuleButtonStyle(active: controller.state.trackType == option.id))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityLabel("刹车灵敏度 \(option.title)")
+                        .accessibilityValue(controller.state.trackType == option.id ? "已选中" : "未选中")
                 }
-                .frame(maxWidth: .infinity)
-
-                Text("a = \(controller.state.intensity) m/s²")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel("当前加速度阈值 \(controller.state.intensity) 米每二次方秒")
-
-                HStack(spacing: Spacing.xs) {
-                    ForEach(options) { option in
-                        Button(option.title) { controller.setTrackType(option.id) }
-                            .buttonStyle(WingCapsuleButtonStyle(active: controller.state.trackType == option.id))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .accessibilityLabel("刹车灵敏度 \(option.title)")
-                            .accessibilityValue(controller.state.trackType == option.id ? "已选中" : "未选中")
-                    }
-                }
-                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Spacing.sm)
-            .background(
-                Color(uiColor: .secondarySystemGroupedBackground),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
+            .frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Spacing.sm)
+        .background(
+            Color.wingSurface,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.wingBorder.opacity(0.8), lineWidth: 1)
+        )
     }
 }

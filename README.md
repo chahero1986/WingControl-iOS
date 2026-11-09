@@ -109,7 +109,7 @@ python tools/verify_swift_sources.py     # Swift 源码静态检查
 python tools/verify_protocol.py          # 协议帧与校验规则
 ```
 
-`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是近黑色）和**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
+`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）和**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
 
 首次真实编译（Xcode 16.4 / macOS 15 runner）报过 `DailyModeView.swift:42: extra argument 'minHeight' in call`：SwiftUI 的 `frame` 有两个重载——`frame(width:height:alignment:)` 与 `frame(minWidth:…:maxHeight:alignment:)`——`width`/`height` 不能和 `min*`/`max*` 同用。现在统一改为 `.frame(minWidth: 44, minHeight: 44)`，既合法又能随 Dynamic Type 放大。
 
@@ -122,6 +122,7 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 > 6. `AnimatedImageView` 是 `UIViewRepresentable`，不要只写 `.frame(height:)`，必须同时约束宽度（`maxWidth: .infinity`）：动画帧原图 710pt 宽，否则赛道页会横向溢出、显示不全（静态预检会拦截）；
 > 7. 不要在 `handleReply` 里删掉 did 同步、不要把写入方式写死成 `.withResponse`、不要移除设备页「协议诊断」——真机上会退回「能连上、写入回调成功、设备毫无反应」，且这种故障在 ATT 层看不到任何报错（静态预检会拦截）；
 > 8. 手写 `Info.plist` 必须保留 `CFBundleIconName = AppIcon`，`SceneDelegate` 必须「先 `makeKeyAndVisible()` 再构造 `WingController` / SwiftUI 根视图」。删掉前者桌面图标空白，顺序反过来则窗口可能根本不上屏而黑屏（静态预检与打包脚本都会拦截）。
+> 9. 界面固定深色：不要删 `UIUserInterfaceStyle=Dark` 与 `.preferredColorScheme(.dark)`，不要把底部栏改回系统 `TabView`、不要把选中按钮改回纯 `.accentColor`、不要恢复赛道演示动画或旧 `Image("Logo")`——这些都会让「选中看不见 / 背景不协调」复发（静态预检会拦截）。
 
 ### 启动黑屏的修复说明
 
@@ -215,6 +216,20 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 
 > 自动同步 did 是零风险的：若状态帧第 2 字节只是设备地址、设备并不校验 did，改成该值也不影响执行；若设备是「记住已配对主机」或「每次连接下发挑战值」，同步则正好对齐。
 
+### 深色主题与界面调整（2026-11-09）
+
+按真机使用反馈做的 5 项纯 UI 调整，**不涉及蓝牙协议与指令逻辑**：
+
+| 需求 | 实现 |
+| --- | --- |
+| 背景改黑、整体协调 | `Info.plist` 加 `UIUserInterfaceStyle=Dark`，`WingRootView` 加 `.preferredColorScheme(.dark)`；`Theme.swift` 统一 `wingBackground=#0F0F0F` / `wingSurface=#1C1C1E` / `wingTabBar`，控制画布沿用原素材合成底色并以边框分层；启动屏改深灰，占位控制器深灰底 + 白字「尾翼控制器 / 正在启动…」，仍能与真黑屏区分 |
+| 底部三个标签选中后图标看不见 | 弃用系统 `TabView` 的 tint，改为 `safeAreaInset` 挂载的自定义彩色底部栏：控制橙 / 设备青 / 说明紫，选中项图标与文字同色，另有半透明色块与描边 |
+| 其它选中项看不见选中的字 | `WingCapsuleButtonStyle` 选中态统一「彩色渐变 + 纯白粗体字 + 内描边」，不再依赖系统 `accentColor`；`WingAppearance.configure()` 把分段控件选中段设为橙底白字、未选中浅灰字，`UISwitch` 开启色同步；AUTO 滚轮文字固定白色 |
+| 底部「尾翼控制器 / 点火升降」前的图标 | 原小程序 80×80 黑白盾形 `Logo` 换成 `WingBrandBadge()`：橙红渐变圆形 + 白色 `arrow.up.arrow.down` 升降符号（SF Symbol，不新增图片资源），HTML 预览同步为同款 CSS 徽标 |
+| 赛道模式演示动画 | `TrackModeView` 整个动画卡片（`TrackAnim0..7` + `TrackStatus`）删除，只保留「刹车幅度设定 / a 值 / 强中弱」；`Preview/index.html` 同步删除；点火成功弹层的 `FireAnim` 动画保留 |
+
+`Assets.xcassets` 里 `TrackAnim*` / `TrackStatus` 素材仍在（未删资源，便于以后恢复），只是不再被引用。静态预检新增 `check_ui_wiring()`，会拦截「改回浅色 / 改回系统 TabView / 恢复赛道动画 / 换回旧 Logo」。
+
 ---
 
 ## 3. 目录结构
@@ -231,7 +246,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 ├── WingControl/
 │   ├── Info.plist                            # 应用名称、图标名、场景代理、蓝牙权限、启动屏、方向
 │   ├── Assets.xcassets/                      # 25 个 imageset + AppIcon + 2 个 colorset
-│   ├── App/WingControlApp.swift              # 应用入口 + SceneDelegate + SwiftUI 根视图
+│   ├── App/WingControlApp.swift              # 应用入口 + SceneDelegate + 全局外观 + SwiftUI 根视图
 │   ├── Model/
 │   │   ├── WingProtocol.swift                # 指令帧编解码、速度校验、档位映射
 │   │   └── WingUIState.swift                 # 页面状态、弹窗、日志模型
@@ -239,12 +254,12 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 │   │   ├── BLEManager.swift                  # CBCentralManager / CBPeripheral 封装
 │   │   ├── WingController.swift              # 状态机、动作分发、回复解析、演示模式
 │   │   └── Haptics.swift                     # 触觉反馈
-│   ├── Theme/Theme.swift                     # 颜色与 8pt 间距
+│   ├── Theme/Theme.swift                     # 深色配色、彩色选中渐变、8pt 间距
 │   └── Views/
-│       ├── RootTabView.swift                 # TabView + 弹层 + 全局提示
-│       ├── ControlView.swift                 # 主控制页 + 底部点火按钮
+│       ├── RootTabView.swift                 # 自定义彩色底部标签栏 + 弹层 + 全局提示
+│       ├── ControlView.swift                 # 主控制页 + 彩色品牌徽标 + 底部点火按钮
 │       ├── DailyModeView.swift               # 日常模式：档位 / 一键 / AUTO
-│       ├── TrackModeView.swift               # 赛道模式：动画 / 刹车灵敏度
+│       ├── TrackModeView.swift               # 赛道模式：刹车灵敏度（演示动画已移除）
 │       ├── DeviceView.swift                  # 扫描、连接、协议诊断、命令日志
 │       ├── InfoView.swift                    # 说明、协议、启动日志
 │       └── Components.swift                  # 通用组件 + 双列滚轮 + 逐帧动画
@@ -314,7 +329,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 - **断线处理**：`didDisconnectPeripheral` 重置特征值并提示，可在「设备」页点「连接上次使用的设备」重连（缓存 peripheral UUID）。
 - **演示模式**：无硬件 / 模拟器下模拟设备回复帧，可完整走通档位、AUTO、赛道、点火成功与失败流程；「模拟已装车内实体按键」开关用于复现点火失败分支。
 - **无障碍**：所有交互元素带 `accessibilityLabel` / `accessibilityValue` / `accessibilityHint`；触控目标 ≥ 44pt；状态同时用图标 + 文字，不只用颜色。
-- **外观**：外层使用语义化颜色自动适配浅色 / 深色模式，控制画布固定深色以还原原素材；自定义字体走 `UIFont.preferredFont`，支持 Dynamic Type。
+- **外观**：固定深色主题（`UIUserInterfaceStyle=Dark` + `.preferredColorScheme(.dark)`），页面 / 卡片 / 底部栏统一用 `Theme.swift` 的黑色系，选中态一律彩色渐变 + 白字高对比；系统控件由 `WingAppearance.configure()` 显式着色，不随系统浅色模式变化；自定义字体走 `UIFont.preferredFont`，支持 Dynamic Type。
 - **动效**：GIF 拆帧用 `UIImageView.animationImages` 播放，遵循「减弱动态效果」时自动静止；不使用全屏 spinner。
 - **触觉**：档位、模式、校验失败、点火成功分别使用 selection / impact / notification 反馈。
 
@@ -324,7 +339,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 
 1. 未做后台蓝牙与 State Restoration，App 退到后台后不保证持续连接。
 2. 原小程序的商城跳转、微信登录、`navigateToMiniProgram` 在 iOS 无对应能力，已移除。
-3. 原包中 `weiyistart.gif`、`logo.gif` 的长启动动画未移植，改为系统启动屏；`track_top.gif` / `fire.gif` 已拆帧保留。
+3. 原包中 `weiyistart.gif`、`logo.gif` 的长启动动画未移植，改为系统启动屏；`track_top.gif` 赛道演示动画按需求已移除（素材仍留在 Assets 中），`fire.gif` 拆帧保留在点火成功弹层。
 4. 已在真机 + JDY-10M-2.3 上完成连接、服务发现与 notify 联调；早期版本因 did 与设备已配对值不一致导致命令被忽略，修复后的 **did 自动同步与写入方式切换需重新编译安装后复验**。若你的模块服务 UUID 不是 `FFE0/FFE1`，「动态发现主服务」逻辑仍可工作；特征值属性不符时可在「协议诊断」切换写入方式，必要时调整 `BLEManager.swift` 的筛选条件。
 5. 工程由脚本生成并在 Windows 上完成静态校验；GitHub Actions 上已用 Xcode 16.4 / iOS 18.5 SDK 跑到 Swift 编译阶段，并按首个真实报错修复了 `.frame` 重载误用（见第 2 节）。最终 archive/导出成功仍以下一次 CI 日志为准。首次打开若 Xcode 提示升级设置，按提示确认即可。
 
