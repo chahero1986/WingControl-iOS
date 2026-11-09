@@ -26,6 +26,9 @@
   8. 深色主题与界面约定：强制深色、底部三个标签用各自彩色高亮、选中按钮用
      彩色渐变 + 白字、底部品牌栏用新徽标、赛道模式不再有演示动画。
      启动屏可以是深灰，但不能是纯黑；占位控制器必须有浅色文字用于区分真黑屏。
+  9. 文字对比度：所有文字显式着色，禁止裸 `.foregroundStyle(.secondary)` /
+     `.tertiary` / `.primary`；提示框用自定义 WingAlertOverlay 而非系统 .alert；
+     List 行 / 分组标题 / 两行重发按钮都要有确定颜色，否则深色下「字是空白」。
 
 用法：
     python tools/verify_swift_sources.py           # 检查全部 Swift 文件
@@ -409,6 +412,70 @@ def check_ui_wiring() -> list[str]:
     return errors
 
 
+def check_text_contrast() -> list[str]:
+    """深色主题下所有文字必须显式着色，不能依赖系统语义色 / 系统弹窗按钮。
+
+    实测故障：系统 UIAlertController 的「确定」按钮、List 分组标题与默认
+    按钮文字在强制深色 + scrollContentBackground(.hidden) 后被判成深色，
+    表现为「按钮在、字是空白」。
+    """
+    errors: list[str] = []
+    views = ROOT / "WingControl/Views"
+
+    root_path = views / "RootTabView.swift"
+    root_code = "\n".join(
+        line for line in root_path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("//")
+    )
+    if ".alert(item:" in root_code:
+        errors.append("RootTabView.swift: 不要用系统 .alert，按钮文字会与深色背景同色")
+    for token, message in (
+        ("WingAlertOverlay(", "缺少自定义高对比提示弹层"),
+        ('Button("确定")', "自定义弹层缺少可见的「确定」按钮"),
+    ):
+        if token not in root_code:
+            errors.append(f"RootTabView.swift: {message}（缺少 {token}）")
+
+    app_src = (ROOT / "WingControl/App/WingControlApp.swift").read_text(encoding="utf-8")
+    if "UIView.appearance().tintColor" not in app_src:
+        errors.append("App/WingControlApp.swift: 缺少全局 tint 高对比兜底")
+
+    for name in ("DeviceView.swift", "InfoView.swift"):
+        src = (views / name).read_text(encoding="utf-8")
+        for token, message in (
+            (".listRowBackground(Color.wingSurface)", "List 行没有显式深色背景"),
+            ("sectionHeader(", "分组标题没有显式着色"),
+            (".tint(Color.wingAccent)", "缺少高对比 tint"),
+        ):
+            if token not in src:
+                errors.append(f"{name}: {message}（缺少 {token}）")
+
+    device = (views / "DeviceView.swift").read_text(encoding="utf-8")
+    for token in ('Button("重发上一条指令")', 'Button("切换写入方式并重发")'):
+        idx = device.find(token)
+        if idx < 0:
+            errors.append(f"DeviceView.swift: 缺少 {token}")
+        elif ".foregroundStyle(Color.wingAccent)" not in device[idx:idx + 300]:
+            errors.append(f"DeviceView.swift: {token} 之后没有显式文字颜色")
+
+    all_swift = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in (ROOT / "WingControl").rglob("*.swift")
+    )
+    for bad in (
+        ".foregroundStyle(.secondary)",
+        ".foregroundStyle(.tertiary)",
+        ".foregroundStyle(.primary)",
+    ):
+        if bad in all_swift:
+            errors.append(
+                f"工程内仍有裸系统语义色 {bad}，请换成 "
+                "Color.wingTextSecondary / Color.white"
+            )
+
+    return errors
+
+
 def main() -> int:
     files = sorted(SWIFT_DIR.rglob("*.swift"))
     if not files:
@@ -423,14 +490,15 @@ def main() -> int:
     errors.extend(check_launch_wiring(files))
     errors.extend(check_protocol_wiring())
     errors.extend(check_ui_wiring())
+    errors.extend(check_text_contrast())
 
-    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面链路配置")
+    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动 / 指令 / 界面 / 文字对比度配置")
     if errors:
         print("\n=== 发现 %d 个问题 ===" % len(errors))
         for err in errors:
             print("ERROR:", err)
         return 1
-    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面）")
+    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路 / 深色界面 / 文字对比度）")
     return 0
 
 

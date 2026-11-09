@@ -91,7 +91,7 @@ struct ConnectionBanner: View {
                 Spacer(minLength: Spacing.xs)
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Color.wingTextSecondary)
                     .accessibilityHidden(true)
             }
             .padding(Spacing.sm)

@@ -9,6 +9,10 @@ enum WingAppearance {
     static func configure() {
         let accent = UIColor(Color.wingAccent)
 
+        // 全局兜底：任何仍由 UIKit 决定文字 / tint 的系统控件
+        // 统一使用高饱和橙色，避免在深色底上被判成深色文字而「字不见了」。
+        UIView.appearance().tintColor = accent
+
         let segmented = UISegmentedControl.appearance()
         segmented.selectedSegmentTintColor = accent
         segmented.setTitleTextAttributes(

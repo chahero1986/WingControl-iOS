@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// 说明页与设备页同样在强制深色下隐藏了 List 背景，
+/// 所有文字显式着色，避免系统语义色被判成深色而「看不见字」。
 struct InfoView: View {
     @EnvironmentObject private var controller: WingController
 
@@ -15,7 +17,7 @@ struct InfoView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("功能说明") {
+                Section {
                     InfoRow(
                         icon: "arrow.up.arrow.down",
                         title: "手动升降",
@@ -36,11 +38,14 @@ struct InfoView: View {
                         title: "点火升降",
                         detail: "需在车内安装实体按键，设备上报「已就绪」后才可开启或关闭。操作结果以设备回复为准。"
                     )
+                } header: {
+                    sectionHeader("功能说明")
                 }
 
-                Section("蓝牙协议（由原小程序还原）") {
+                Section {
                     Text("指令帧 6 字节：BB | did | 80 | cmd | p1 | p2；did 为 App 首次启动生成的 0~255 随机值并持久化。")
                         .font(.caption)
+                        .foregroundStyle(Color.white)
                     ProtocolRow(name: "设置档位", hex: "BB did 80 01 step 00")
                     ProtocolRow(name: "自动升降", hex: "BB did 80 02 down up")
                     ProtocolRow(name: "关闭自动", hex: "BB did 80 03 00 00")
@@ -49,42 +54,60 @@ struct InfoView: View {
                     ProtocolRow(name: "一键升 / 降", hex: "BB did 80 06 01/02 00")
                     Text("设备通过 notify 上报 8 字节基础帧（auto / 档位 / 车速 / 降速临界 / 升速临界）或 12 字节扩展帧（追加赛道类型 / 点火开关 / 点火就绪 / 点火结果）。")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.wingTextSecondary)
                     Text("扫描时只接受名称以 JDY 开头的蓝牙模块；连接后自动发现主服务，并优先选择同时支持 write 与 notify 的特征值。")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.wingTextSecondary)
+                } header: {
+                    sectionHeader("蓝牙协议（由原小程序还原）")
                 }
 
-                Section("启动日志") {
+                Section {
                     if controller.launchLogs.isEmpty {
                         Text("暂无记录")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.wingTextSecondary)
                     } else {
                         ForEach(launchEntries) { entry in
                             Text("\(entry.id + 1). \(entry.date, format: .dateTime.year().month().day().hour().minute().second())")
                                 .font(.caption.monospaced())
+                                .foregroundStyle(Color.white)
                                 .accessibilityLabel("第 \(entry.id + 1) 次启动")
                         }
                     }
+                } header: {
+                    sectionHeader("启动日志")
                 }
 
-                Section("关于") {
+                Section {
                     HStack {
                         Text("版本")
+                            .foregroundStyle(Color.white)
                         Spacer()
-                        Text("1.0.0").foregroundStyle(.secondary)
+                        Text("1.0.0")
+                            .foregroundStyle(Color.wingTextSecondary)
                     }
                     Text("本 App 由一款已下架的微信小程序逆向还原，界面素材沿用原包资源，通信协议保持一致。")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.wingTextSecondary)
+                } header: {
+                    sectionHeader("关于")
                 }
             }
             .scrollContentBackground(.hidden)
             .background(Color.wingBackground)
+            .listRowBackground(Color.wingSurface)
+            .tint(Color.wingAccent)
             .navigationTitle("说明")
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Color.wingTextSecondary)
+            .textCase(nil)
     }
 }
 
@@ -101,8 +124,12 @@ private struct InfoRow: View {
                 .frame(width: 28)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.white)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(Color.wingTextSecondary)
             }
         }
         .padding(.vertical, 4)
@@ -118,10 +145,11 @@ private struct ProtocolRow: View {
         HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
             Text(name)
                 .font(.caption)
+                .foregroundStyle(Color.white)
                 .frame(minWidth: 84, alignment: .leading)
             Text(hex)
                 .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.wingTextSecondary)
                 .textSelection(.enabled)
         }
         .accessibilityElement(children: .combine)

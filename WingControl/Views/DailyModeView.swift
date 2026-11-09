@@ -143,11 +143,11 @@ private struct AutoCard: View {
                 HStack(spacing: Spacing.sm) {
                     Text("降速/加速临界")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.wingTextSecondary)
                         .frame(maxWidth: .infinity)
                     Text("尾翼下降/升起")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.wingTextSecondary)
                         .frame(maxWidth: .infinity)
                 }
                 SpeedWheelPair(
@@ -168,19 +168,19 @@ private struct AutoCard: View {
                 HStack(spacing: Spacing.xs) {
                     Spacer()
                     Button("进入校准模式") { controller.requestCalibration() }
-                        .font(.caption)
+                        .buttonStyle(WingCapsuleButtonStyle(filled: true))
                         .frame(minHeight: 44)
                         .accessibilityLabel("进入校准模式")
                         .accessibilityHint("把两列速度临界都设为 0，需二次确认")
                 }
                 Text("注：降速加速临界范围总大于 20 码；两列同时设为 0 将进入校准模式。")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.wingTextSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("开启后尾翼按车速自动升降；关闭时可用上方档位按钮手动控制。")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.wingTextSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

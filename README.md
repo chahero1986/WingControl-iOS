@@ -109,7 +109,7 @@ python tools/verify_swift_sources.py     # Swift 源码静态检查
 python tools/verify_protocol.py          # 协议帧与校验规则
 ```
 
-`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）和**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
+`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是纯黑且占位控制器有浅色文字、图标键与深色外观）、**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）、**界面链路**（深色主题、彩色底部栏与选中态、新徽标、赛道动画已移除）和**文字对比度**（禁止裸系统语义色、提示框必须自定义、分组标题与两行重发按钮必须有确定颜色）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
 
 首次真实编译（Xcode 16.4 / macOS 15 runner）报过 `DailyModeView.swift:42: extra argument 'minHeight' in call`：SwiftUI 的 `frame` 有两个重载——`frame(width:height:alignment:)` 与 `frame(minWidth:…:maxHeight:alignment:)`——`width`/`height` 不能和 `min*`/`max*` 同用。现在统一改为 `.frame(minWidth: 44, minHeight: 44)`，既合法又能随 Dynamic Type 放大。
 
@@ -122,7 +122,8 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 > 6. `AnimatedImageView` 是 `UIViewRepresentable`，不要只写 `.frame(height:)`，必须同时约束宽度（`maxWidth: .infinity`）：动画帧原图 710pt 宽，否则赛道页会横向溢出、显示不全（静态预检会拦截）；
 > 7. 不要在 `handleReply` 里删掉 did 同步、不要把写入方式写死成 `.withResponse`、不要移除设备页「协议诊断」——真机上会退回「能连上、写入回调成功、设备毫无反应」，且这种故障在 ATT 层看不到任何报错（静态预检会拦截）；
 > 8. 手写 `Info.plist` 必须保留 `CFBundleIconName = AppIcon`，`SceneDelegate` 必须「先 `makeKeyAndVisible()` 再构造 `WingController` / SwiftUI 根视图」。删掉前者桌面图标空白，顺序反过来则窗口可能根本不上屏而黑屏（静态预检与打包脚本都会拦截）。
-> 9. 界面固定深色：不要删 `UIUserInterfaceStyle=Dark` 与 `.preferredColorScheme(.dark)`，不要把底部栏改回系统 `TabView`、不要把选中按钮改回纯 `.accentColor`、不要恢复赛道演示动画或旧 `Image("Logo")`——这些都会让「选中看不见 / 背景不协调」复发（静态预检会拦截）。
+> 9. 界面固定深色：不要删 `UIUserInterfaceStyle=Dark` 与 `.preferredColorScheme(.dark)`，不要把底部栏改回系统 `TabView`、不要把选中按钮改回纯 `.accentColor`、不要恢复赛道演示动画或旧 `Image("Logo")`——这些都会让「选中看不见 / 背景不协调」复发（静态预检会拦截）；
+> 10. 所有文字显式着色：禁止裸 `.foregroundStyle(.secondary)` / `.tertiary` / `.primary`，提示框必须用 `WingAlertOverlay` 而不是系统 `.alert`，List 行要有 `.listRowBackground(Color.wingSurface)`、分组标题要有显式颜色的 `sectionHeader()`。改回系统语义色会让弹窗按钮、分组标题和两行重发按钮变成「按钮在、字是空白」（静态预检会拦截）。
 
 ### 启动黑屏的修复说明
 
@@ -229,6 +230,20 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 | 赛道模式演示动画 | `TrackModeView` 整个动画卡片（`TrackAnim0..7` + `TrackStatus`）删除，只保留「刹车幅度设定 / a 值 / 强中弱」；`Preview/index.html` 同步删除；点火成功弹层的 `FireAnim` 动画保留 |
 
 `Assets.xcassets` 里 `TrackAnim*` / `TrackStatus` 素材仍在（未删资源，便于以后恢复），只是不再被引用。静态预检新增 `check_ui_wiring()`，会拦截「改回浅色 / 改回系统 TabView / 恢复赛道动画 / 换回旧 Logo」。
+
+### 深色主题下文字看不见的修复（2026-11-09 第二轮）
+
+真机反馈的三处「字是空白」，其实是同一个根因：**强制深色 + `.scrollContentBackground(.hidden)` 之后，仍有一批文字依赖系统语义色 / 系统控件 tint，系统把它们判成了深色字，落在深色底上就看不见**。
+
+| 现象 | 根因 | 修复 |
+| --- | --- | --- |
+| 未连接蓝牙时点控制按钮，提示框底部「确定」按钮在、字看不见 | `.alert(item:)` 是系统 `UIAlertController`，按钮文字颜色由 tint 决定 | 换成自定义 `WingAlertOverlay`：深灰卡片 + 白标题 + 浅灰正文 + 橙渐变「确定」（纯白粗体字），校准确认额外给「取消」；`WingAppearance` 再加 `UIView.appearance().tintColor` 全局兜底 |
+| 设备页「蓝牙操作」等分组标题 / 说明文字看不见 | List 隐藏背景后，Section header 与 `.foregroundStyle(.secondary)` 仍按系统外观取色 | `DeviceView` / `InfoView` 的每个 Section 改用显式着色的 `sectionHeader()`，所有 `.secondary` → `Color.wingTextSecondary`，正文 → `Color.white`；List 加 `.listRowBackground(Color.wingSurface)` 与 `.tint(Color.wingAccent)` 双保险 |
+| 「直接发送原始帧」下面两行按钮看不见字 | 「重发上一条指令」「切换写入方式并重发」是 List 里的默认样式 Button，完全依赖系统 tint | 两行显式 `.foregroundStyle(Color.wingAccent)`；「应用 / 发送 / 连接」改成 `WingCapsuleButtonStyle(filled: true)` 白字橙底；两个 `TextField` 由 `.roundedBorder` 换成自定义 `darkTextField()`（深底 + 白字 + 橙色光标） |
+
+顺带把 `DailyModeView` 的 4 处 `.secondary`、`Components.swift` 的 chevron `.tertiary`、工具栏蓝牙图标、弹层「关闭」按钮、「进入校准模式」按钮也全部显式着色，避免同类问题在别的页面复发。静态预检新增 `check_text_contrast()` 拦截回退。
+
+`Preview/index.html` 是纯 CSS 硬编码配色（无系统控件），不受此问题影响，无需改动。
 
 ---
 

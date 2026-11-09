@@ -27,6 +27,7 @@ struct ControlView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: openDevices) {
                         Image(systemName: "antenna.radiowaves.left.and.right")
+                            .foregroundStyle(Color.wingAccent)
                             .accessibilityHidden(true)
                     }
                     .frame(minWidth: 44, minHeight: 44)

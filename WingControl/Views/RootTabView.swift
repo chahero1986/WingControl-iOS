@@ -49,26 +49,20 @@ struct RootTabView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.wingBackground.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) { tabBar }
+        // 系统 UIAlertController 的按钮文字由 tint 决定，在强制深色主题下
+        // 可能与弹窗背景同色而「按钮在、字没了」。改用完全自控的 SwiftUI 弹层。
+        .overlay {
+            if let item = controller.alertItem {
+                WingAlertOverlay(
+                    item: item,
+                    dismiss: { controller.alertItem = nil },
+                    confirmCalibration: { controller.confirmCalibration() }
+                )
+            }
+        }
         .sheet(item: $controller.sheet) { sheet in
             SheetHost(sheet: sheet)
                 .environmentObject(controller)
-        }
-        .alert(item: $controller.alertItem) { item in
-            switch item {
-            case .info(let message):
-                return Alert(
-                    title: Text("提示"),
-                    message: Text(message),
-                    dismissButton: .default(Text("确定"))
-                )
-            case .calibration:
-                return Alert(
-                    title: Text("进入校准模式"),
-                    message: Text("升降速度都设置为0将进入校准模式，您确认要进入校准模式吗？"),
-                    primaryButton: .default(Text("确定")) { controller.confirmCalibration() },
-                    secondaryButton: .cancel(Text("取消"))
-                )
-            }
         }
     }
 
@@ -118,6 +112,83 @@ struct RootTabView: View {
     }
 }
 
+// MARK: - 提示弹层（完全自控配色，不依赖系统 UIAlertController）
+
+/// 取代 `.alert(item:)`：系统弹窗按钮文字颜色由 tint 决定，深色主题下
+/// 曾出现「按钮在、字是空白」。这里所有文字与按钮都显式指定高对比颜色。
+private struct WingAlertOverlay: View {
+    let item: WingAlertItem
+    let dismiss: () -> Void
+    let confirmCalibration: () -> Void
+
+    private var isCalibration: Bool {
+        if case .calibration = item { return true }
+        return false
+    }
+
+    private var title: String {
+        isCalibration ? "进入校准模式" : "提示"
+    }
+
+    private var message: String {
+        switch item {
+        case .info(let text): return text
+        case .calibration: return "升降速度都设置为0将进入校准模式，您确认要进入校准模式吗？"
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.65)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: dismiss)
+
+            VStack(spacing: Spacing.sm) {
+                Text(title)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Color.white)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.wingTextSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                HStack(spacing: Spacing.xs) {
+                    if isCalibration {
+                        Button("取消") { dismiss() }
+                            .buttonStyle(WingCapsuleButtonStyle())
+                            .frame(maxWidth: .infinity)
+                            .accessibilityLabel("取消进入校准模式")
+                    }
+                    Button("确定") {
+                        if isCalibration { confirmCalibration() }
+                        dismiss()
+                    }
+                    .buttonStyle(WingCapsuleButtonStyle(filled: true))
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("确定")
+                }
+            }
+            .padding(Spacing.md)
+            .frame(maxWidth: 320)
+            .background(
+                Color.wingSurface,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.wingBorder, lineWidth: 1)
+            )
+            .padding(Spacing.md)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityAddTraits(.isModal)
+        .transition(.opacity)
+    }
+}
+
 // MARK: - 弹层宿主（sheet 自带下滑关闭手势 + 显式关闭按钮）
 
 struct SheetHost: View {
@@ -150,6 +221,8 @@ struct SheetHost: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("关闭") { dismiss() }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.wingAccent)
                         .accessibilityLabel("关闭弹窗")
                 }
             }
