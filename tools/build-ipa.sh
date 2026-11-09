@@ -117,6 +117,19 @@ if [ "${SCENE_DELEGATE}" != "WingControl.SceneDelegate" ]; then
 fi
 echo "==> 启动场景校验通过: ${SCENE_DELEGATE}"
 
+# 图标：工程 GENERATE_INFOPLIST_FILE=NO，Xcode 不会自动写 CFBundleIconName。
+# 少了这个键，即使 Assets.car 里有合规的 AppIcon，桌面也只会显示空白图标。
+ICON_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "${APP}/Info.plist" 2>/dev/null || true)"
+if [ "${ICON_NAME}" != "AppIcon" ]; then
+  echo "图标配置错误: 期望 CFBundleIconName=AppIcon, 实际 '${ICON_NAME}'；装到桌面会没有图标" >&2
+  exit 1
+fi
+if [ ! -f "${APP}/Assets.car" ]; then
+  echo "归档产物缺少 Assets.car: 图标、启动屏颜色与全部界面图片都会丢失" >&2
+  exit 1
+fi
+echo "==> 图标与资源校验通过: ${ICON_NAME} / Assets.car $(du -h "${APP}/Assets.car" | cut -f1)"
+
 mkdir -p "${IPA_DIR}" "${STAGE}"
 
 if [ "${SIGNED}" -eq 1 ]; then
@@ -180,4 +193,8 @@ unzip -l "${IPA}" | grep -E "Payload/${APP_FILE}/Info\.plist" >/dev/null || {
   echo "IPA 结构异常：缺少 Payload/${APP_FILE}/Info.plist" >&2
   exit 1
 }
-echo "==> IPA 结构校验通过：Payload/${APP_FILE}/Info.plist"
+unzip -l "${IPA}" | grep -E "Payload/${APP_FILE}/Assets\.car" >/dev/null || {
+  echo "IPA 结构异常：缺少 Payload/${APP_FILE}/Assets.car，装到桌面会没有图标" >&2
+  exit 1
+}
+echo "==> IPA 结构校验通过：Info.plist / Assets.car 均在 Payload/${APP_FILE}/ 内"

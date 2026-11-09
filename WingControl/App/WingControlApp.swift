@@ -9,8 +9,8 @@ import UIKit
 /// UISceneConfigurations / scene delegate 时，会创建场景但不创建窗口，
 /// 界面就一直停在启动屏（表现为黑屏）。
 ///
-/// 这里改为显式入口：AppDelegate 提供场景配置，SceneDelegate 亲自创建
-/// UIWindow 并装载 SwiftUI 根视图，从根上保证一定有一个可见窗口。
+/// 这里用显式入口：AppDelegate 提供场景配置，SceneDelegate 先创建并显示
+/// UIWindow，再装载 SwiftUI 根视图，从根上保证一定有一个可见窗口。
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
 
@@ -18,7 +18,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
-        NSLog("[WingControl] application didFinishLaunching")
+        NSLog("[WingControl] 1/4 application didFinishLaunching")
         return true
     }
 
@@ -27,11 +27,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         configurationForConnecting connectingSceneSession: UISceneSession,
         options: UIScene.ConnectionOptions
     ) -> UISceneConfiguration {
+        // 名称与 Info.plist 的 UISceneConfigurations 保持一致；
+        // delegateClass 用类型而非字符串，不受 Product Module Name 影响。
         let configuration = UISceneConfiguration(
             name: "Default Configuration",
             sessionRole: connectingSceneSession.role
         )
         configuration.delegateClass = SceneDelegate.self
+        NSLog("[WingControl] 2/4 configurationForConnecting, role=\(connectingSceneSession.role.rawValue)")
         return configuration
     }
 }
@@ -49,20 +52,57 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         willConnectTo session: UISceneSession,
         options connectionOptions: UIScene.ConnectionOptions
     ) {
-        guard let windowScene = scene as? UIWindowScene else { return }
+        guard let windowScene = scene as? UIWindowScene else {
+            NSLog("[WingControl] willConnectTo 失败：scene 不是 UIWindowScene（\(type(of: scene))）")
+            return
+        }
+
+        // 关键顺序：先建立一个必定可见的窗口并上屏，再加载状态机与 SwiftUI 根视图。
+        // 若后续环节异常，用户看到的是浅色占位界面而不是整屏黑，Console 也能据日志定位。
+        let window = UIWindow(windowScene: windowScene)
+        window.backgroundColor = .systemBackground
+        window.rootViewController = LaunchPlaceholderController()
+        window.makeKeyAndVisible()
+        self.window = window
+        NSLog("[WingControl] 3/4 window installed with placeholder")
 
         let model = WingController()
         controller = model
-
-        let window = UIWindow(windowScene: windowScene)
-        // 明确的浅色底：即便 SwiftUI 根视图加载失败，也不会是一整块黑屏
-        window.backgroundColor = .systemBackground
         window.rootViewController = UIHostingController(
             rootView: WingRootView().environmentObject(model)
         )
-        window.makeKeyAndVisible()
-        self.window = window
-        NSLog("[WingControl] window installed, root view attached")
+        NSLog("[WingControl] 4/4 SwiftUI root view attached")
+    }
+}
+
+// MARK: - 启动占位界面
+
+/// 纯 UIKit 占位：浅色语义色背景 + 一行 Dynamic Type 文字，无交互、无全屏 spinner。
+/// 只用于区分「窗口已创建」与「SwiftUI 界面加载失败」，正常启动下一闪而过。
+/// 工程保持零第三方依赖，这里用原生 NSLayoutConstraint 而不是引入 SnapKit。
+private final class LaunchPlaceholderController: UIViewController {
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+
+        let label = UILabel()
+        label.text = "尾翼控制器"
+        label.font = .preferredFont(forTextStyle: .title2)
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = .label
+        label.textAlignment = .center
+        label.accessibilityLabel = "尾翼控制器"
+        label.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(label)
+
+        let guide = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: guide.centerYAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -16)
+        ])
     }
 }
 

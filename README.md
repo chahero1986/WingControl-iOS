@@ -63,7 +63,7 @@ push / PR / tag 触发的构建固定用 `macos-15`；若将来该标签也退�
 | `WingControl-unsigned.ipa` | 免签名。用 AltStore / Sideloadly / TrollStore 侧载；普通未越狱 iPhone 无法直接安装 |
 | `WingControl-signed.ipa` | 按描述文件签名。`ad-hoc` 可直接装到 profile 已登记 UDID 的设备，`app-store` 用于上传 App Store Connect |
 
-在 Actions 运行页底部 `Artifacts` 下载（保留 30 天）；打 tag 时还会附到 Release。归档后脚本会校验 `CFBundleDisplayName == 尾翼控制器`，避免打出旧名称的包。
+在 Actions 运行页底部 `Artifacts` 下载（保留 30 天）；打 tag 时还会附到 Release。归档后脚本会校验 `CFBundleDisplayName == 尾翼控制器`、`CFBundleIconName == AppIcon`、`UISceneDelegateClassName` 以及 `Assets.car` 是否存在，避免打出旧名称、丢图标或启动黑屏的包。
 
 ### 配置签名（可选，不配也能用）
 
@@ -120,7 +120,8 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 > 4. 仓库根的 `.gitattributes` 强制所有文本文件用 LF 存储；Windows 编辑后不要提交 CRLF，macOS 的 bash 3.2 会把 `\r` 当成命令内容的一部分；
 > 5. 不要删 `Info.plist` 的 `UISceneConfigurations`，也不要把应用入口改回 SwiftUI 隐式生命周期——工程是手工生成的，没有 Xcode 自动生成的场景清单，改回去会黑屏（静态预检会拦截）；
 > 6. `AnimatedImageView` 是 `UIViewRepresentable`，不要只写 `.frame(height:)`，必须同时约束宽度（`maxWidth: .infinity`）：动画帧原图 710pt 宽，否则赛道页会横向溢出、显示不全（静态预检会拦截）；
-> 7. 不要在 `handleReply` 里删掉 did 同步、不要把写入方式写死成 `.withResponse`、不要移除设备页「协议诊断」——真机上会退回「能连上、写入回调成功、设备毫无反应」，且这种故障在 ATT 层看不到任何报错（静态预检会拦截）。
+> 7. 不要在 `handleReply` 里删掉 did 同步、不要把写入方式写死成 `.withResponse`、不要移除设备页「协议诊断」——真机上会退回「能连上、写入回调成功、设备毫无反应」，且这种故障在 ATT 层看不到任何报错（静态预检会拦截）；
+> 8. 手写 `Info.plist` 必须保留 `CFBundleIconName = AppIcon`，`SceneDelegate` 必须「先 `makeKeyAndVisible()` 再构造 `WingController` / SwiftUI 根视图」。删掉前者桌面图标空白，顺序反过来则窗口可能根本不上屏而黑屏（静态预检与打包脚本都会拦截）。
 
 ### 启动黑屏的修复说明
 
@@ -142,6 +143,32 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 | `tools/verify_swift_sources.py` | 新增启动链路检查，防止后续改动把黑屏问题带回来 |
 
 > 界面仍全是 SwiftUI；只是把「谁来建窗口」这件事从系统隐式推断改成代码显式创建。真机上若仍异常，可用 Xcode 的 Devices & Simulators / Console 过滤 `WingControl` 看是否打印 `application didFinishLaunching` 与 `window installed`：前者没有 = 启动前就失败（签名 / bundle 配置），只有前者没有后者 = 场景未连接，`RootTabView` 报错 = 视图层问题。
+
+### 桌面图标丢失与安装后黑屏复发
+
+现象：重新打包安装后，桌面显示空白 / 默认图标，打开又停在黑屏。
+
+**图标**：工程 `GENERATE_INFOPLIST_FILE = NO`，`Info.plist` 是手写的，Xcode 不会像新模板那样自动注入 `CFBundleIconName`。`ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon` 只负责把 `AppIcon.appiconset` 编译进 `Assets.car`；运行时系统靠 plist 里的 `CFBundleIconName` 去查名字，缺了它，图标资源再合规也用不上。`AppIcon.png` 本身是 1024×1024、RGB 无 alpha，无需改图。
+
+**黑屏**：`SceneDelegate` 原来是「先构造 `WingController` 与 SwiftUI 根视图 → 最后 `makeKeyAndVisible()`」。中间任一环节异常，窗口就没建立，用户看到的是启动屏而不是界面。
+
+| 位置 | 修复 |
+| --- | --- |
+| `WingControl/Info.plist` | 补 `CFBundleIconName = AppIcon` |
+| `WingControl/App/WingControlApp.swift` | `SceneDelegate` 先创建 `UIWindow`、设 `.systemBackground`、装浅色占位控制器并 `makeKeyAndVisible()`，再加载状态机与 SwiftUI 根视图；占位用原生 Auto Layout + Dynamic Type 文字（工程保持零第三方依赖，不引入 SnapKit），四个阶段都有 `NSLog` |
+| `tools/build-ipa.sh` | 归档后校验 `CFBundleIconName == AppIcon`、`Assets.car` 存在；最终 IPA 再校验 `Payload/WingControl.app/Assets.car`，任一缺失直接拒绝出包 |
+| `.github/workflows/build-ipa.yml` | Actions 日志打印 Icon Name 与 Assets.car 大小 |
+| `tools/verify_swift_sources.py` | 启动链路检查新增 `CFBundleIconName`、Resources 构建阶段、`ASSETCATALOG_COMPILER_APPICON_NAME`，以及「窗口先上屏」顺序 |
+
+真机自检：Xcode → Devices & Simulators / Console 过滤 `WingControl`，正常启动依次打印：
+
+`1/4 application didFinishLaunching` → `2/4 configurationForConnecting` → `3/4 window installed with placeholder` → `4/4 SwiftUI root view attached`
+
+- 只有 1/4：场景配置没生效，检查 `UISceneConfigurations` 与 Product Module Name；
+- 到 3/4 没有 4/4：状态机 / SwiftUI 根视图异常，此时屏幕应显示浅色「尾翼控制器」占位而不是全黑；
+- 一条都没有：包本身不对（装到了旧 IPA，或签名 / bundle 结构损坏）。
+
+> 侧载提示：免签名 IPA 经 AltStore / Sideloadly 重签时，若工具重新生成了 `Info.plist`，可能再次丢掉 `CFBundleIconName`。装完先看桌面图标、再打开 App 看能否进「设备」页；若图标没了但界面正常，优先换用签名 IPA 或更新侧载工具。
 
 ### 赛道模式页面显示不全的修复
 
@@ -202,7 +229,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 │   ├── project.xcworkspace/
 │   └── xcshareddata/xcschemes/WingControl.xcscheme   # 共享 Scheme，CI 必需
 ├── WingControl/
-│   ├── Info.plist                            # 应用名称、蓝牙权限、启动屏、方向
+│   ├── Info.plist                            # 应用名称、图标名、场景代理、蓝牙权限、启动屏、方向
 │   ├── Assets.xcassets/                      # 25 个 imageset + AppIcon + 2 个 colorset
 │   ├── App/WingControlApp.swift              # 应用入口 + SceneDelegate + SwiftUI 根视图
 │   ├── Model/

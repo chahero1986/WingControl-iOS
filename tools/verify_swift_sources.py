@@ -15,7 +15,9 @@
   3. 项目约定：可选绑定一律写 `guard let self = self`，不用 Swift 5.7 简写。
   4. 括号平衡、旧应用名残留。
   5. 启动链路：Info.plist 的场景清单必须指向 SceneDelegate，且全工程只能有
-     一个应用入口、启动屏不能是近黑色（否则启动失败时表现为黑屏）。
+     一个应用入口、启动屏不能是近黑色（否则启动失败时表现为黑屏）；
+     手写 Info.plist 还必须显式声明 CFBundleIconName，资源目录要进 Resources
+     构建阶段，否则 Assets.car 用不上、桌面图标空白。
   6. `AnimatedImageView` 是 UIViewRepresentable，帧原图 710pt 宽，必须同时
      约束宽度（maxWidth: .infinity），否则赛道页会横向溢出、显示不全。
   7. 指令链路：状态帧第 2 字节是设备认可的 did，收到后必须同步到后续命令帧；
@@ -224,6 +226,25 @@ def check_launch_wiring(swift_files: list[Path]) -> list[str]:
         )
     if "UILaunchScreen" not in info:
         errors.append(f"{rel_plist}: 缺少 UILaunchScreen")
+    if info.get("CFBundleIconName") != "AppIcon":
+        errors.append(
+            f"{rel_plist}: 缺少 CFBundleIconName=AppIcon；GENERATE_INFOPLIST_FILE=NO "
+            "时 Xcode 不会自动注入，桌面图标会显示空白"
+        )
+
+    pbxproj_path = ROOT / "WingControl.xcodeproj" / "project.pbxproj"
+    try:
+        pbx = pbxproj_path.read_text(encoding="utf-8")
+    except OSError as exc:  # noqa: BLE001
+        errors.append(f"project.pbxproj: 读取失败（{exc}）")
+    else:
+        if "Assets.xcassets in Resources" not in pbx:
+            errors.append(
+                "project.pbxproj: Assets.xcassets 未加入 Resources 构建阶段，"
+                "不会生成 Assets.car，图标与全部界面图片都会丢失"
+            )
+        if "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon" not in pbx:
+            errors.append("project.pbxproj: 缺少 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon")
 
     colorset = (
         ROOT / "WingControl" / "Assets.xcassets"
@@ -250,9 +271,22 @@ def check_launch_wiring(swift_files: list[Path]) -> list[str]:
         entry_src = entry.read_text(encoding="utf-8")
     except OSError as exc:
         return errors + [f"启动入口读取失败：{exc}"]
-    for token in ("class SceneDelegate", "makeKeyAndVisible", "UIHostingController"):
+    for token in (
+        "class SceneDelegate",
+        "makeKeyAndVisible",
+        "UIHostingController",
+        "LaunchPlaceholderController",
+    ):
         if token not in entry_src:
             errors.append(f"App/WingControlApp.swift: 启动入口缺少 {token}")
+
+    visible_at = entry_src.find("makeKeyAndVisible")
+    model_at = entry_src.find("WingController()")
+    if visible_at >= 0 and model_at >= 0 and visible_at > model_at:
+        errors.append(
+            "App/WingControlApp.swift: 必须先 makeKeyAndVisible 再构造 WingController，"
+            "否则视图层异常时窗口根本没上屏，表现为黑屏"
+        )
 
     mains = sum(
         mask_strings_and_comments(path.read_text(encoding="utf-8")).count("@main")
