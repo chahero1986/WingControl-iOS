@@ -12,6 +12,8 @@ struct DarkCanvas<Content: View>: View {
 
     var body: some View {
         content
+            // 明确占满容器宽度，避免 UIViewRepresentable 等自带固有尺寸的子视图横向撑破卡片
+            .frame(maxWidth: .infinity)
             .padding(Spacing.sm)
             .background(Color.wingCanvas, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
@@ -150,39 +152,44 @@ struct AnimatedImageView: UIViewRepresentable {
     var play: Bool = true
 
     func makeUIView(context: Context) -> UIImageView {
-        let imageView = UIImageView()
+        // 只设置 animationImages 时 UIImageView 的 intrinsicContentSize 是
+        // noIntrinsicMetric；原帧 710pt 宽会把父容器撑出屏幕（赛道页看不全）。
+        // 先放静态首帧让固有尺寸有效，再降低内容吸附/压缩优先级，
+        // 由 SwiftUI 的父容器决定实际尺寸。
+        let images = frames()
+        let imageView = UIImageView(image: images.first)
         imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
         imageView.isAccessibilityElement = false
-        let images = frames()
-        if UIAccessibility.isReduceMotionEnabled {
-            imageView.image = images.first
-        } else {
-            imageView.animationImages = images
-            imageView.animationDuration = duration
-            imageView.animationRepeatCount = 0
-            if play { imageView.startAnimating() }
-        }
+        imageView.backgroundColor = .clear
+        imageView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        imageView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        apply(images, to: imageView)
         return imageView
     }
 
     func updateUIView(_ imageView: UIImageView, context: Context) {
-        let images = frames()
-        guard !UIAccessibility.isReduceMotionEnabled else {
-            imageView.stopAnimating()
-            imageView.image = images.first
-            return
-        }
-        if play {
-            if !imageView.isAnimating {
-                imageView.animationImages = images
-                imageView.animationDuration = duration
-                imageView.startAnimating()
-            }
+        let shouldAnimate = play && !UIAccessibility.isReduceMotionEnabled
+        // 状态没变就不要重复装载图片，避免 SwiftUI 刷新时反复 startAnimating
+        if shouldAnimate {
+            guard !imageView.isAnimating else { return }
         } else {
-            imageView.stopAnimating()
-            imageView.image = images.first
+            guard imageView.isAnimating || imageView.animationImages != nil else { return }
         }
+        apply(frames(), to: imageView)
+    }
+
+    private func apply(_ images: [UIImage], to imageView: UIImageView) {
+        imageView.stopAnimating()
+        imageView.animationImages = nil
+        imageView.image = images.first
+        guard !images.isEmpty, play, !UIAccessibility.isReduceMotionEnabled else { return }
+        imageView.animationImages = images
+        imageView.animationDuration = duration
+        imageView.animationRepeatCount = 0
+        imageView.startAnimating()
     }
 
     private func frames() -> [UIImage] {

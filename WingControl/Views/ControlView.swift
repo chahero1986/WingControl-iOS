@@ -17,6 +17,7 @@ struct ControlView: View {
                     }
                     FooterBar()
                 }
+                .frame(maxWidth: .infinity, alignment: .top)
                 .padding(Spacing.sm)
             }
             .background(Color(uiColor: .systemGroupedBackground))

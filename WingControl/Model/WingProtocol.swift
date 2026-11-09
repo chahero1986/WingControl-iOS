@@ -45,6 +45,10 @@ enum SpeedValidation {
 
 /// 通知特征值返回的 8 字节基础帧 / 12 字节扩展帧
 struct WingTelemetry {
+    /// 状态帧第 2 字节：设备认可的主机指令 ID（did）。
+    /// 真机日志中设备每秒上报 `BB 1C 20 …`，而 App 首次启动随机生成的是 0B，
+    /// 两者不一致时设备会忽略所有命令，但 ATT 写入回调仍显示成功。
+    let deviceID: UInt8
     let autoFlag: Int
     let step: Int
     let speed: Int
@@ -106,12 +110,35 @@ enum WingProtocol {
         data.map { String(format: "%02X", $0) }.joined()
     }
 
+    /// 把用户输入的十六进制文本还原成字节，供「发送测试帧」诊断使用。
+    static func data(fromHex text: String) -> Data? {
+        let cleaned = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "0x", with: "")
+            .uppercased()
+        guard !cleaned.isEmpty, cleaned.count % 2 == 0 else { return nil }
+        var bytes: [UInt8] = []
+        var index = cleaned.startIndex
+        while index < cleaned.endIndex {
+            guard let next = cleaned.index(index, offsetBy: 2, limitedBy: cleaned.endIndex) else {
+                return nil
+            }
+            guard let value = UInt8(String(cleaned[index..<next]), radix: 16) else { return nil }
+            bytes.append(value)
+            index = next
+        }
+        return Data(bytes)
+    }
+
     /// 解析 notify 数据。字节 3~7 为基础状态，字节 8~11 为扩展状态。
+    /// 字节 1 是设备认可的 did，必须回填到后续所有命令帧。
     static func parse(_ data: Data) -> WingTelemetry? {
         let bytes = [UInt8](data)
-        guard bytes.count >= 8 else { return nil }
+        guard bytes.count >= 8, bytes[0] == header else { return nil }
         let extended = bytes.count >= 12
         return WingTelemetry(
+            deviceID: bytes[1],
             autoFlag: Int(bytes[3]),
             step: Int(bytes[4]),
             speed: Int(bytes[5]),

@@ -109,7 +109,7 @@ python tools/verify_swift_sources.py     # Swift 源码静态检查
 python tools/verify_protocol.py          # 协议帧与校验规则
 ```
 
-`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是近黑色）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
+`verify_swift_sources.py` 检查 `.frame` 重载是否混用、字符串插值里的 `Substring`、可选绑定写法、括号平衡、旧应用名，以及**启动链路完整性**（场景清单指向 `SceneDelegate`、全工程恰好一个入口、启动屏不是近黑色）和**指令链路完整性**（状态帧 did 同步、写入方式可切换、设备页诊断入口）；同一检查也已接入工作流，在 `xcodebuild` 之前运行。
 
 首次真实编译（Xcode 16.4 / macOS 15 runner）报过 `DailyModeView.swift:42: extra argument 'minHeight' in call`：SwiftUI 的 `frame` 有两个重载——`frame(width:height:alignment:)` 与 `frame(minWidth:…:maxHeight:alignment:)`——`width`/`height` 不能和 `min*`/`max*` 同用。现在统一改为 `.frame(minWidth: 44, minHeight: 44)`，既合法又能随 Dynamic Type 放大。
 
@@ -118,7 +118,9 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 > 2. 字符串插值里出现 `Substring` 要用 `String(...)` 包一层，`LocalizedStringKey` 没有对应插值重载；
 > 3. workflow 与脚本中的 shell 变量一律写成 `${VAR}`，且工作流显式设置 `LANG/LC_ALL=en_US.UTF-8`。macOS 自带的 bash 3.2 在 `set -u` 下会把变量名后紧跟的中文标点字节吞进变量名，写成 `$VAR；` 会报 `unbound variable`；花括号能彻底划定边界。
 > 4. 仓库根的 `.gitattributes` 强制所有文本文件用 LF 存储；Windows 编辑后不要提交 CRLF，macOS 的 bash 3.2 会把 `\r` 当成命令内容的一部分；
-> 5. 不要删 `Info.plist` 的 `UISceneConfigurations`，也不要把应用入口改回 SwiftUI 隐式生命周期——工程是手工生成的，没有 Xcode 自动生成的场景清单，改回去会黑屏（静态预检会拦截）。
+> 5. 不要删 `Info.plist` 的 `UISceneConfigurations`，也不要把应用入口改回 SwiftUI 隐式生命周期——工程是手工生成的，没有 Xcode 自动生成的场景清单，改回去会黑屏（静态预检会拦截）；
+> 6. `AnimatedImageView` 是 `UIViewRepresentable`，不要只写 `.frame(height:)`，必须同时约束宽度（`maxWidth: .infinity`）：动画帧原图 710pt 宽，否则赛道页会横向溢出、显示不全（静态预检会拦截）；
+> 7. 不要在 `handleReply` 里删掉 did 同步、不要把写入方式写死成 `.withResponse`、不要移除设备页「协议诊断」——真机上会退回「能连上、写入回调成功、设备毫无反应」，且这种故障在 ATT 层看不到任何报错（静态预检会拦截）。
 
 ### 启动黑屏的修复说明
 
@@ -140,6 +142,51 @@ python tools/verify_protocol.py          # 协议帧与校验规则
 | `tools/verify_swift_sources.py` | 新增启动链路检查，防止后续改动把黑屏问题带回来 |
 
 > 界面仍全是 SwiftUI；只是把「谁来建窗口」这件事从系统隐式推断改成代码显式创建。真机上若仍异常，可用 Xcode 的 Devices & Simulators / Console 过滤 `WingControl` 看是否打印 `application didFinishLaunching` 与 `window installed`：前者没有 = 启动前就失败（签名 / bundle 配置），只有前者没有后者 = 场景未连接，`RootTabView` 报错 = 视图层问题。
+
+### 赛道模式页面显示不全的修复
+
+赛道动画是 `UIViewRepresentable` 包装的 `UIImageView`，帧原图 **710×400**；原代码只写 `.frame(height: 150)`，宽度没有约束，视图按 710pt 固有宽度撑开卡片，右半边被挤出屏幕。
+
+| 位置 | 修复 |
+| --- | --- |
+| `Views/Components.swift` → `AnimatedImageView` | 先设静态首帧让固有尺寸有效，降低水平/垂直内容吸附与压缩优先级，让父容器决定尺寸；抽出 `apply(_:to:)` 统一播放/暂停/减弱动态效果，避免每次 SwiftUI 刷新都重新装载图片 |
+| `Views/Components.swift` → `DarkCanvas` | 内容统一加 `.frame(maxWidth: .infinity)`，通用防横向溢出 |
+| `Views/TrackModeView.swift` | 动画视图改为 `.frame(maxWidth: .infinity, minHeight: 150, maxHeight: 150)` + `.clipped()`；状态图、说明区、按钮行都明确宽度；说明按钮 `.fixedSize` 防被压扁 |
+| `Views/ControlView.swift` | 滚动内容 VStack 加 `.frame(maxWidth: .infinity, alignment: .top)` |
+| `Views/RootTabView.swift` | 点火成功弹层里的同类动画同样约束；赛道/AUTO 说明弹层默认展开到 `.large` 并显示拖拽指示条，长文本不用先手动上拉 |
+| `Preview/index.html` | 屏幕区禁横向溢出、底部留白；矮窗口（≤920px 高）时手机模型收进视口，内容在屏幕区内滚动，底部不再被截断 |
+| `tools/verify_swift_sources.py` | 新增检查：所有 `AnimatedImageView` 的 `.frame` 必须含 `maxWidth` |
+
+### 指令发送后设备毫无反应的修复
+
+真机现象（JDY-10M-2.3）：连接成功、`Service FFE0 · Write FFE1 · Notify FFE1`、`notify 启动成功`、设备每秒上报状态帧、`写入特征值 FFE1`、`发送命令成功` 全部正常，但尾翼不动，状态帧始终不变。
+
+日志里两条关键信息：
+
+| 来源 | 帧 | 第 2 字节 |
+| --- | --- | --- |
+| 设备状态帧 | `BB 1C 20 01 05 00 00 A5 …` | `1C` |
+| App 发出的命令 | `BB 0B 80 01 03 00` | `0B` |
+
+`did` 是**设备认可的主机 ID**：原微信小程序首次启动随机生成一次并永久存进 `wx.setStorage({key:"did"})`，设备记住了这个值（本例 `1C`），之后只接受带该 did 的命令。iOS App 首次启动又随机生成 `0B`，虽然 6 字节帧结构、特征值、ATT 写入都正确，设备仍静默丢弃命令——这也解释了为什么 `didWriteValueFor` 回调成功、状态帧却毫无变化。
+
+| 位置 | 修复 |
+| --- | --- |
+| `Model/WingProtocol.swift` | `WingTelemetry` 增加 `deviceID`，`parse` 校验帧头并解析状态帧第 2 字节；新增 `data(fromHex:)` 供诊断发送原始帧 |
+| `Services/WingController.swift` | 收到状态帧时若设备 did 与本机不同，自动同步并持久化，后续命令都用设备认可的值；新增「指令发出后 3.5 秒状态帧未变化」诊断日志，以及 `setDeviceID` / `sendRawFrame` / `resendLastFrame` |
+| `Services/BLEManager.swift` | 写入方式改为可切换，默认**无响应写**（与微信小程序在 iOS 上的行为一致），按特征值属性自动回退；日志打印完整帧、写入方式与特征值 UUID |
+| `Views/DeviceView.swift` | 新增「协议诊断」区：显示本机 did / 设备回传 did / 写入方式 / 上一条指令，支持手动指定 did、直接发送原始 hex 帧、重发、切换写入方式重发 |
+| `tools/verify_protocol.py` / `verify_swift_sources.py` | 新增 did 同步与测试帧解析用例；静态预检增加「指令链路」检查 |
+
+排查顺序（都在「设备」Tab）：
+
+1. 连接后看「协议诊断」里的**设备回传 ID**，App 会自动同步，日志出现 `指令 ID：0B → 1C（按设备状态帧同步）`。
+2. 再发一次档位指令。状态帧变化即成功，日志会打印 `设备已响应：状态帧发生变化`。
+3. 若仍不变，切换「无响应写」并点「切换写入方式并重发」，两种 ATT 写法各试一次。
+4. 仍无效时，用「直接发送原始帧」手动发 `BB1C80010300`（把 `1C` 换成日志里设备回传的值），或手动指定 did 后重发。
+5. 全程看「最近命令日志」：命令帧、写入方式、状态帧都会记录。出现 `注意：指令发出后状态帧没有变化` 说明设备确实忽略了命令，而不是界面没刷新。
+
+> 自动同步 did 是零风险的：若状态帧第 2 字节只是设备地址、设备并不校验 did，改成该值也不影响执行；若设备是「记住已配对主机」或「每次连接下发挑战值」，同步则正好对齐。
 
 ---
 
@@ -171,7 +218,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 │       ├── ControlView.swift                 # 主控制页 + 底部点火按钮
 │       ├── DailyModeView.swift               # 日常模式：档位 / 一键 / AUTO
 │       ├── TrackModeView.swift               # 赛道模式：动画 / 刹车灵敏度
-│       ├── DeviceView.swift                  # 扫描、连接、调试、命令日志
+│       ├── DeviceView.swift                  # 扫描、连接、协议诊断、命令日志
 │       ├── InfoView.swift                    # 说明、协议、启动日志
 │       └── Components.swift                  # 通用组件 + 双列滚轮 + 逐帧动画
 ├── Preview/index.html                        # 单文件交互原型（图片已内嵌 base64）
@@ -207,7 +254,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 
 指令帧固定 6 字节：`BB | did | 80 | cmd | p1 | p2`
 
-- `did`：App 首次启动随机生成 0~255 并持久化（对应小程序 `wx.setStorage({key:"did"})`）。
+- `did`：**设备认可的主机 ID**。原小程序首次启动随机生成 0~255 并持久化（`wx.setStorage({key:"did"})`），设备会把已配对的 did 记下来；App 首次启动随机生成的值往往不同，必须按状态帧回传值同步，否则命令会被静默忽略（见第 2 节「指令发送后设备毫无反应的修复」）。
 - 所有速度值以十六进制单字节发送，例如 80 km/h → `0x50`。
 
 | 功能 | 帧 |
@@ -219,7 +266,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 | 点火升降（关/开 = 0/1） | `BB did 80 05 on 00` |
 | 一键上升 / 下降 | `BB did 80 06 01/02 00` |
 
-**设备 notify 上报**：至少 8 字节基础帧，字节 3~7 依次为 `auto 标志 / 档位 / 车速 / 降速临界 / 升速临界`；12 字节扩展帧再追加 `赛道类型 / 点火开关 / 点火就绪 / 点火结果`。`auto == 2` 表示自动模式已开启。
+**设备 notify 上报**：至少 8 字节基础帧，以 `BB` 开头；**字节 1 是设备认可的 did**（真机日志 `BB 1C 20 01 05 00 00 A5 …` 中为 `1C`），字节 2 是帧类型 `20`，字节 3~7 依次为 `auto 标志 / 档位 / 车速 / 降速临界 / 升速临界`；12 字节扩展帧再追加 `赛道类型 / 点火开关 / 点火就绪 / 点火结果`。`auto == 2` 表示自动模式已开启。App 每次收到状态帧都会用字节 1 校正后续命令的 did。
 
 **速度校验顺序**（左列降速 `down`、右列升速 `up`）：
 
@@ -228,7 +275,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 3. `down == 0 && up != 0` → 「下降速度必须大于零，升降都为零校准除外」；
 4. `up <= down` → 「升起速度必须大于下降速度，升降都为零校准除外」。
 
-**蓝牙设备**：扫描只接受名称以 `JDY` 开头的 BLE 模块；连接后发现主服务，优先选择同时支持 `write` 与 `notify` 的特征值（JDY 常见 `FFE0/FFE1`），否则退化为分别取可写 / 可通知特征值。写入时按特征值属性自动选 `.withResponse` 或 `.withoutResponse`。
+**蓝牙设备**：扫描只接受名称以 `JDY` 开头的 BLE 模块；连接后发现主服务，优先选择同时支持 `write` 与 `notify` 的特征值（JDY 常见 `FFE0/FFE1`），否则退化为分别取可写 / 可通知特征值。写入默认用 `.withoutResponse`（与微信小程序在 iOS 上的行为一致），可在「设备 → 协议诊断」切到 `.withResponse`；若特征值只支持其中一种，代码会自动回退。无响应写不会触发 `didWriteValueFor`，日志会显式打印「命令已写入」避免误判。
 
 运行 `python tools/verify_protocol.py` 可校验全部帧、校验规则和回复解析。
 
@@ -251,7 +298,7 @@ WingControl-iOS/                              # ← 作为 GitHub 仓库根目�
 1. 未做后台蓝牙与 State Restoration，App 退到后台后不保证持续连接。
 2. 原小程序的商城跳转、微信登录、`navigateToMiniProgram` 在 iOS 无对应能力，已移除。
 3. 原包中 `weiyistart.gif`、`logo.gif` 的长启动动画未移植，改为系统启动屏；`track_top.gif` / `fire.gif` 已拆帧保留。
-4. 尚未在真机 + 真实 JDY 模块上联调。若你的模块服务 UUID 不是 `FFE0/FFE1`，当前「动态发现主服务」逻辑仍可工作；若特征值属性与假设不符，请把 `BLEManager.swift` 中的筛选条件按实际模块调整。
+4. 已在真机 + JDY-10M-2.3 上完成连接、服务发现与 notify 联调；早期版本因 did 与设备已配对值不一致导致命令被忽略，修复后的 **did 自动同步与写入方式切换需重新编译安装后复验**。若你的模块服务 UUID 不是 `FFE0/FFE1`，「动态发现主服务」逻辑仍可工作；特征值属性不符时可在「协议诊断」切换写入方式，必要时调整 `BLEManager.swift` 的筛选条件。
 5. 工程由脚本生成并在 Windows 上完成静态校验；GitHub Actions 上已用 Xcode 16.4 / iOS 18.5 SDK 跑到 Swift 编译阶段，并按首个真实报错修复了 `.frame` 重载误用（见第 2 节）。最终 archive/导出成功仍以下一次 CI 日志为准。首次打开若 Xcode 提示升级设置，按提示确认即可。
 
 ---

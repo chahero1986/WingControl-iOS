@@ -30,11 +30,12 @@ def validate(down: int, up: int) -> str:
 
 
 def parse(raw: str):
-    """解析 notify 上报的 8 / 12 字节帧"""
+    """解析 notify 上报的 8 / 12 字节帧；bytes[1] 是设备认可的 did"""
     data = bytes.fromhex(raw.replace(" ", ""))
-    if len(data) < 8:
+    if len(data) < 8 or data[0] != 0xBB:
         return None
     result = {
+        "did": data[1],
         "auto": data[3], "step": data[4], "speed": data[5],
         "down": data[6], "up": data[7],
     }
@@ -50,6 +51,29 @@ def ignition_title(ready: bool, on: bool) -> str:
     if not ready:
         return "点火升降(需配合车内按键)"
     return "点火升降(已开启)" if on else "点火升降(已关闭)"
+
+
+def resolved_device_id(local: int, telemetry: bytes) -> int:
+    """WingController.handleReply 的等价逻辑：用状态帧第 2 字节覆盖本机 did。
+
+    真机日志里设备每秒上报 `BB 1C 20 01 05 00 00 A5`，而 App 首次启动随机
+    生成的 did 是 0B。设备只认已配对的 did，命令 `BB 0B 80 01 03 00` 会被
+    静默忽略（CoreBluetooth 写入回调依然成功）。
+    """
+    if len(telemetry) >= 2 and telemetry[0] == 0xBB:
+        return telemetry[1]
+    return local
+
+
+def hex_to_bytes(text: str) -> Optional[bytes]:
+    """WingProtocol.data(fromHex:) 的等价实现，供「发送测试帧」使用"""
+    cleaned = text.strip().replace(" ", "").replace("0x", "").upper()
+    if not cleaned or len(cleaned) % 2:
+        return None
+    try:
+        return bytes.fromhex(cleaned)
+    except ValueError:
+        return None
 
 
 def main() -> None:
@@ -81,7 +105,9 @@ def main() -> None:
         print(f"  [OK] 校验 {d:>2}/{u:<3} → {got}")
 
     basic = parse("BB 0A 80 02 03 46 0A 50")
-    assert basic == {"auto": 2, "step": 3, "speed": 70, "down": 10, "up": 80}, basic
+    assert basic == {
+        "did": 0x0A, "auto": 2, "step": 3, "speed": 70, "down": 10, "up": 80
+    }, basic
     print(f"  [OK] 8 字节基础帧 → {basic}")
 
     full = parse("BB 0A 80 02 05 3C 0A 50 02 01 01 00")
@@ -94,6 +120,19 @@ def main() -> None:
 
     assert STEPS == [0, 3, 4, 5]
     print("  [OK] 有效档位 = 0 / 3 / 4 / 5（对应 tial0/3/4/5.png）")
+
+    # 真机联调：设备认可 1C，App 首次随机到 0B，必须自动同步
+    live = bytes.fromhex("BB1C2001050000A5")
+    assert parse("BB 1C 20 01 05 00 00 A5")["did"] == 0x1C
+    assert resolved_device_id(0x0B, live) == 0x1C
+    print("  [OK] 状态帧 did 同步：本机 0B → 设备认可 1C")
+    assert frame(0x01, 3, 0, did=0x1C) == "BB 1C 80 01 03 00"
+    print("  [OK] 用设备认可的 did 发帧：BB 1C 80 01 03 00")
+    assert hex_to_bytes("BB1C80010300") == bytes.fromhex("BB1C80010300")
+    assert hex_to_bytes("BB 1C 80 01 03 00") == bytes.fromhex("BB1C80010300")
+    assert hex_to_bytes("BB1C8001030") is None
+    assert hex_to_bytes("BBGG80010300") is None
+    print("  [OK] 测试帧解析（空格 / 奇数位 / 非法字符）")
     print("\n协议校验全部通过。")
 
 

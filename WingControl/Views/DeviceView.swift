@@ -2,6 +2,8 @@ import SwiftUI
 
 struct DeviceView: View {
     @EnvironmentObject private var controller: WingController
+    @State private var didInput = ""
+    @State private var rawFrameInput = ""
 
     private var recentLogs: [LogEntry] { Array(controller.logs.prefix(20)) }
 
@@ -81,6 +83,81 @@ struct DeviceView: View {
                     .frame(minHeight: 44)
                     .accessibilityLabel("模拟已安装车内实体按键")
                     .accessibilityHint("关闭后点火升降会返回操作失败")
+                }
+
+                Section("协议诊断：指令无反应时按顺序排查") {
+                    statusRow(title: "本机指令 ID (did)", value: controller.deviceIDHex)
+                    statusRow(title: "设备回传 ID", value: controller.learnedDeviceIDHex ?? "—")
+                    statusRow(title: "写入方式", value: controller.useWriteWithoutResponse ? "无响应写" : "带响应写")
+                    statusRow(title: "上一条指令", value: controller.lastCommandHex.isEmpty ? "—" : controller.lastCommandHex)
+
+                    Toggle("自动同步 did（对比测试时可关闭）", isOn: Binding(
+                        get: { controller.autoSyncDeviceID },
+                        set: { controller.setAutoSyncDeviceID($0) }
+                    ))
+                    .frame(minHeight: 44)
+                    .accessibilityLabel("自动同步指令 ID")
+                    .accessibilityHint("关闭后设备状态帧不再覆盖手动指定的 did")
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("1. 手动指定 did（2 位十六进制，例如 1C）")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: Spacing.xs) {
+                            TextField("1C", text: $didInput)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 120)
+                            Spacer(minLength: Spacing.xs)
+                            Button("应用") { controller.setDeviceID(hex: didInput) }
+                                .buttonStyle(.bordered)
+                                .frame(minHeight: 44)
+                        }
+                    }
+                    .padding(.vertical, 2)
+
+                    Toggle("无响应写（与微信小程序一致）", isOn: Binding(
+                        get: { controller.useWriteWithoutResponse },
+                        set: { controller.setWriteMode(withoutResponse: $0) }
+                    ))
+                    .frame(minHeight: 44)
+                    .accessibilityLabel("使用无响应写")
+                    .accessibilityHint("关闭后改用带响应写，用于排查固件只认其中一种写法的情况")
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("2. 直接发送原始帧（6 字节十六进制）")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: Spacing.xs) {
+                            TextField(controller.suggestedTestFrame, text: $rawFrameInput)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption.monospaced())
+                            Button("发送") {
+                                controller.sendRawFrame(
+                                    hex: rawFrameInput.isEmpty
+                                        ? controller.suggestedTestFrame
+                                        : rawFrameInput
+                                )
+                            }
+                            .buttonStyle(.bordered)
+                            .frame(minHeight: 44)
+                        }
+                    }
+                    .padding(.vertical, 2)
+
+                    Button("重发上一条指令") { controller.resendLastFrame() }
+                        .frame(minHeight: 44)
+                        .accessibilityLabel("重发上一条指令")
+
+                    Button("切换写入方式并重发") {
+                        controller.setWriteMode(withoutResponse: !controller.useWriteWithoutResponse)
+                        controller.resendLastFrame()
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityLabel("切换写入方式并重发上一条指令")
+
+                    Text("先确认上方「演示模式」已关闭（开启时指令只在本地模拟，不会发到蓝牙）。设备每秒上报一次状态帧；若发指令后状态帧一直不变，说明设备忽略了命令：先让本机 did 与设备回传 ID 一致，再切换写入方式重试。状态帧不变会在日志里给出提示。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("最近命令日志") {

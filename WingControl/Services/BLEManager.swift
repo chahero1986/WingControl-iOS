@@ -204,17 +204,36 @@ final class BLEManager: NSObject, ObservableObject {
         phase = .idle
     }
 
-    func write(_ data: Data) {
+    /// 微信小程序在 iOS 上对同时支持两种写的特征值走「无响应写」；
+    /// 部分 JDY 模块固件也只按无响应写透传。这里做成可切换，并回退到特征值实际支持的模式。
+    func write(_ data: Data, withoutResponse: Bool = true) {
         guard let peripheral,
               let characteristic = writeCharacteristic,
               peripheral.state == .connected else {
             onLog?("发送命令失败：设备未连接或特征值不可用")
             return
         }
-        let type: CBCharacteristicWriteType =
-            characteristic.properties.contains(.write) ? .withResponse : .withoutResponse
+        let supportsFast = characteristic.properties.contains(.writeWithoutResponse)
+        let supportsAck = characteristic.properties.contains(.write)
+        let type: CBCharacteristicWriteType
+        if withoutResponse && supportsFast {
+            type = .withoutResponse
+        } else if supportsAck {
+            type = .withResponse
+        } else if supportsFast {
+            type = .withoutResponse
+        } else {
+            onLog?("发送命令失败：特征值 \(characteristic.uuid.uuidString) 不支持写入")
+            return
+        }
+
         peripheral.writeValue(data, for: characteristic, type: type)
-        onLog?("写入特征值 \(characteristic.uuid.uuidString)")
+        let mode = type == .withResponse ? "带响应写" : "无响应写"
+        onLog?("写入特征值 \(characteristic.uuid.uuidString) · \(mode) · \(WingProtocol.hexString(data))")
+        // 无响应写不会触发 didWriteValueFor，日志里需要显式说明，避免被误判为「没发出去」
+        if type == .withoutResponse {
+            onLog?("命令已写入（无响应写，设备不返回 ATT 回执）")
+        }
     }
 }
 
@@ -386,6 +405,6 @@ extension BLEManager: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error = error { onLog?("发送命令失败：\(error.localizedDescription)") }
-        else { onLog?("发送命令成功") }
+        else { onLog?("发送命令成功（设备已确认写入）") }
     }
 }

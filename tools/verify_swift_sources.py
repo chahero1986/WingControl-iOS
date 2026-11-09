@@ -16,6 +16,11 @@
   4. 括号平衡、旧应用名残留。
   5. 启动链路：Info.plist 的场景清单必须指向 SceneDelegate，且全工程只能有
      一个应用入口、启动屏不能是近黑色（否则启动失败时表现为黑屏）。
+  6. `AnimatedImageView` 是 UIViewRepresentable，帧原图 710pt 宽，必须同时
+     约束宽度（maxWidth: .infinity），否则赛道页会横向溢出、显示不全。
+  7. 指令链路：状态帧第 2 字节是设备认可的 did，收到后必须同步到后续命令帧；
+     写入方式要能在「无响应写 / 带响应写」之间切换；设备页保留协议诊断入口。
+     删掉任一条都会退回「能连上、写入回调成功、设备却毫无反应」的状态。
 
 用法：
     python tools/verify_swift_sources.py           # 检查全部 Swift 文件
@@ -178,6 +183,17 @@ def check_file(path: Path) -> list[str]:
                 f"{masked.count(open_ch)}/{masked.count(close_ch)}"
             )
 
+    # 5) UIViewRepresentable 动画帧原图 710pt 宽，只写 .frame(height:) 会横向撑破卡片
+    for m in re.finditer(r"AnimatedImageView\s*\(", masked):
+        tail = masked[m.start() : m.start() + 600]
+        frame_args = re.search(r"\.frame\s*\(([^)]*)\)", tail)
+        if not frame_args or "maxWidth" not in frame_args.group(1):
+            line = masked.count("\n", 0, m.start()) + 1
+            errors.append(
+                f"{rel}:{line}: AnimatedImageView 的 .frame 必须包含 maxWidth: .infinity，"
+                "否则大图会把赛道页撑出屏幕"
+            )
+
     if "克拉电动尾翼" in src:
         errors.append(f"{rel}: 仍有旧应用名「克拉电动尾翼」")
     return errors
@@ -247,6 +263,45 @@ def check_launch_wiring(swift_files: list[Path]) -> list[str]:
     return errors
 
 
+def check_protocol_wiring() -> list[str]:
+    """校验 did 同步 / 写入方式 / 诊断入口，防止「指令静默失效」的问题复发。"""
+    errors: list[str] = []
+    checks = {
+        "WingControl/Model/WingProtocol.swift": [
+            ("deviceID: bytes[1]", "状态帧第 2 字节必须解析为设备认可的 did"),
+            ("static func data(fromHex", "缺少原始帧输入解析（诊断用）"),
+            ("bytes[0] == header", "parse 必须校验帧头 BB"),
+        ],
+        "WingControl/Services/WingController.swift": [
+            ("telemetry.deviceID != deviceID", "收到状态帧后必须同步 did，否则设备会忽略命令"),
+            ("applyDeviceID(", "缺少 did 更新入口"),
+            ("armReplyCheck(", "缺少状态帧未变化的诊断"),
+            ("ble.write(frame, withoutResponse:", "命令写入没有使用可切换的写入方式"),
+            ("autoSyncDeviceID", "缺少 did 自动同步开关（手动对比测试需要能关闭）"),
+        ],
+        "WingControl/Services/BLEManager.swift": [
+            ("withoutResponse: Bool = true", "默认应使用与微信小程序一致的无响应写"),
+            ("writeWithoutResponse", "未处理特征值只支持无响应写的情况"),
+            ("WingProtocol.hexString(data)", "写入日志缺少完整帧内容"),
+        ],
+        "WingControl/Views/DeviceView.swift": [
+            ("协议诊断", "设备页缺少协议诊断入口"),
+            ("setDeviceID(hex:", "缺少手动指定 did"),
+            ("sendRawFrame(", "缺少原始帧发送"),
+        ],
+    }
+    for rel, tokens in checks.items():
+        path = ROOT / rel
+        if not path.exists():
+            errors.append(f"{rel}: 文件缺失")
+            continue
+        src = path.read_text(encoding="utf-8")
+        for token, message in tokens:
+            if token not in src:
+                errors.append(f"{rel}: {message}（缺少 {token}）")
+    return errors
+
+
 def main() -> int:
     files = sorted(SWIFT_DIR.rglob("*.swift"))
     if not files:
@@ -259,14 +314,15 @@ def main() -> int:
         errors.extend(check_file(path))
         frames += len(list(find_frame_calls(mask_strings_and_comments(path.read_text(encoding="utf-8")))))
     errors.extend(check_launch_wiring(files))
+    errors.extend(check_protocol_wiring())
 
-    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动链路配置")
+    print(f"检查 {len(files)} 个 Swift 文件、{frames} 处 .frame 调用、启动链路与指令链路配置")
     if errors:
         print("\n=== 发现 %d 个问题 ===" % len(errors))
         for err in errors:
             print("ERROR:", err)
         return 1
-    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路）")
+    print("静态预检通过（frame 重载 / Substring 插值 / 可选绑定 / 括号 / 名称 / 启动链路 / 动画尺寸 / 指令链路）")
     return 0
 
 

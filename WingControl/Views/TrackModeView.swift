@@ -29,20 +29,24 @@ struct TrackModeView: View {
                             duration: 1.6,
                             play: playAnimation
                         )
-                        .frame(height: 150)
+                        // 动画帧原图 710pt 宽：必须同时约束宽高，否则卡片会横向溢出屏幕
+                        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 150)
+                        .clipped()
                         .accessibilityHidden(true)
                     }
                     .buttonStyle(.plain)
-                    .frame(minHeight: 44)
+                    .frame(maxWidth: .infinity, minHeight: 44)
                     .accessibilityLabel("赛道模式动画")
                     .accessibilityHint(playAnimation ? "双击暂停动画" : "双击播放动画")
 
                     Image("TrackStatus")
                         .resizable()
                         .scaledToFit()
-                        .frame(maxHeight: 56)
+                        .frame(maxWidth: .infinity, maxHeight: 56)
+                        .clipped()
                         .accessibilityLabel("赛道模式启用中，尾翼已升起")
                 }
+                .frame(maxWidth: .infinity)
             }
 
             VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -52,11 +56,14 @@ struct TrackModeView: View {
                     InfoButton(label: "赛道模式说明") {
                         controller.sheet = .trackHint
                     }
+                    .fixedSize(horizontal: true, vertical: false)
                 }
+                .frame(maxWidth: .infinity)
 
                 Text("a = \(controller.state.intensity) m/s²")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel("当前加速度阈值 \(controller.state.intensity) 米每二次方秒")
 
                 HStack(spacing: Spacing.xs) {
@@ -68,7 +75,9 @@ struct TrackModeView: View {
                             .accessibilityValue(controller.state.trackType == option.id ? "已选中" : "未选中")
                     }
                 }
+                .frame(maxWidth: .infinity)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Spacing.sm)
             .background(
                 Color(uiColor: .secondarySystemGroupedBackground),

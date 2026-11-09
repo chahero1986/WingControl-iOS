@@ -53,7 +53,19 @@ struct RootTabView: View {
 
 struct SheetHost: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedDetent: PresentationDetent
     let sheet: WingSheet
+
+    init(sheet: WingSheet) {
+        self.sheet = sheet
+        // 说明类弹层文字较长，默认展开到大尺寸，避免半屏时看不全
+        let fullHeight: Bool
+        switch sheet {
+        case .autoHint, .trackHint: fullHeight = true
+        case .ignitionSuccess, .ignitionFailure: fullHeight = false
+        }
+        _selectedDetent = State(initialValue: fullHeight ? .large : .medium)
+    }
 
     var body: some View {
         NavigationStack {
@@ -73,7 +85,8 @@ struct SheetHost: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $selectedDetent)
+        .presentationDragIndicator(.visible)
     }
 
     @ViewBuilder
@@ -148,7 +161,8 @@ private struct IgnitionSuccessContent: View {
                 .font(.body)
                 .multilineTextAlignment(.center)
             AnimatedImageView(prefix: "FireAnim", frameCount: 4, duration: 1.2)
-                .frame(height: 100)
+                .frame(maxWidth: .infinity, minHeight: 100, maxHeight: 100)
+                .clipped()
                 .accessibilityHidden(true)
             Button("返回") { dismiss() }
                 .buttonStyle(WingCapsuleButtonStyle(filled: true))

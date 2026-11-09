@@ -45,7 +45,7 @@
   .navbar{height:44px;flex:0 0 44px;display:flex;align-items:center;justify-content:center;
           color:#fff;font-size:15px;font-weight:600;border-bottom:1px solid #232326;position:relative}
   .navbar .icon{position:absolute;right:16px;top:9px;color:#8ab4f8;font-size:18px;cursor:pointer}
-  .screen{flex:1;overflow-y:auto;padding:14px 14px 8px;scrollbar-width:thin}
+  .screen{flex:1;overflow-y:auto;overflow-x:hidden;padding:14px 14px 20px;scrollbar-width:thin}
   .screen::-webkit-scrollbar{width:4px}.screen::-webkit-scrollbar-thumb{background:#3a3a40;border-radius:4px}
   .tabbar{height:76px;flex:0 0 76px;background:#161619;border-top:1px solid #2a2a2e;
           display:flex;padding-bottom:14px}
@@ -133,6 +133,8 @@
   .note{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.7}
   .boot-hint{color:#c9c9cf;font-size:13px;line-height:2;text-align:center;padding:64px 12px;word-break:break-all}
   @media(max-width:900px){.page{grid-template-columns:1fr;justify-items:center}.intro{max-width:390px}}
+  /* 笔记本等矮窗口下让手机模型收进视口，内容在屏幕区内滚动，底部不会被截断 */
+  @media(max-height:920px){.page{padding:16px 24px}.phone{height:calc(100vh - 32px);min-height:480px}}
 </style>
 </head>
 <body>
@@ -158,7 +160,7 @@
       <h2>指令日志（BB | did | 80 | cmd | p1 | p2）</h2>
       <div id="cmdlog"><div class="empty">点击右侧界面上的任意控制，指令会显示在这里…</div></div>
     </div>
-    <div class="note">交付物为完整的 Xcode 工程（SwiftUI + CoreBluetooth，iOS 16+），需要在 macOS 上用 Xcode 15+ 打开编译；此 HTML 仅用于在 Windows 上预览界面与交互逻辑。</div>
+    <div class="note">交付物为完整的 Xcode 工程（SwiftUI + CoreBluetooth，iOS 16+），需要在 macOS 上用 Xcode 15+ 打开编译；此 HTML 仅用于在 Windows 上预览界面与交互逻辑。真机若出现「连接成功但指令无反应」，请到「设备 → 协议诊断」核对指令 ID 与写入方式。</div>
   </div>
 
   <div class="phone">
@@ -185,7 +187,7 @@ const IMGS = {
 };
 const DOWN=[0,10,20,30,40,50,60,70,80], UP=[0,50,60,70,80,90,100,110,120], STEPS=[0,3,4,5];
 const S={tab:'control',mode:'daily',step:0,isAuto:false,di:1,ui:4,track:2,ignOn:false,ignReady:true,
-         did:Math.floor(Math.random()*256),connected:true,logs:[],hardware:true};
+         did:Math.floor(Math.random()*256),deviceDid:0x1C,connected:true,logs:[],hardware:true};
 let pendingCalibration=null, pendingIgnition=null;
 
 function hex(n){return n.toString(16).padStart(2,'0').toUpperCase().slice(-2)}
@@ -197,10 +199,17 @@ function log(label,bytes){
 }
 function send(cmd,p1,p2,label){
   log(label,frame(cmd,p1,p2));
-  // 模拟设备回复（12 字节扩展帧）
-  const reply=['BB',hex(S.did),'80',hex(S.isAuto?2:0),hex(S.step),'00',hex(DOWN[S.di]),hex(UP[S.ui]),
+  // 模拟设备回复（12 字节扩展帧）：第 2 字节是设备认可的 did，第 3 字节是帧类型 20
+  const reply=['BB',hex(S.deviceDid),'20',hex(S.isAuto?2:0),hex(S.step),'00',hex(DOWN[S.di]),hex(UP[S.ui]),
                hex(S.track),hex(S.ignOn?1:0),hex(S.ignReady?1:0),'00'].join(' ');
   setTimeout(()=>log('← 状态',reply),260);
+}
+// 真机修复的演示：设备只认已配对的 did，必须按状态帧回传值同步后再发命令
+function syncDid(){
+  const old=hex(S.did);
+  S.did=S.deviceDid;
+  log('同步 did',old+' → '+hex(S.did)+'（按设备状态帧）');
+  render();
 }
 function goTab(t){S.tab=t;render()}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -281,6 +290,12 @@ function deviceHTML(){
   h+='<div class="sectionlabel">调试选项</div><div class="card">'+
      '<div class="kv"><span>演示模式（无需硬件）</span><span style="color:#34c759">已开启</span></div>'+
      '<div class="kv"><span>模拟已装车内实体按键</span><span style="color:#5aa7ff;cursor:pointer" onclick="toggleHardware()">'+(S.hardware?'已开启':'已关闭')+'</span></div></div>';
+  h+='<div class="sectionlabel">协议诊断（真机指令无反应时排查）</div><div class="card">'+
+     '<div class="kv"><span>本机指令 ID (did)</span><span class="proto">'+hex(S.did)+'</span></div>'+
+     '<div class="kv"><span>设备回传 ID</span><span class="proto">'+hex(S.deviceDid)+'</span></div>'+
+     '<div class="kv"><span>写入方式</span><span>无响应写</span></div>'+
+     '<button class="rowbtn" onclick="syncDid()">按设备状态帧同步 did</button>'+
+     '<div class="hint">真机日志里设备每秒上报 BB 1C 20 01 05 00 00 A5…，只认可已配对的 did；iOS 端收到状态帧后已自动同步。此原型仅作演示。</div></div>';
   h+='<div class="sectionlabel">最近命令日志</div><div class="card">'+
      (S.logs.length?S.logs.slice(0,8).map(x=>'<div class="kv"><span>'+esc(x.k)+'</span><span class="proto">'+esc(x.v)+'</span></div>').join(''):
      '<div class="hint">暂无记录</div>')+'</div>';
