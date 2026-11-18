@@ -15,12 +15,13 @@ on:
       runner:
         description: 'macOS runner 镜像（macOS 14 已于 2026-11-02 退役，勿再使用）'
         required: true
-        default: 'macos-15'
+        default: 'macos-15-intel'
         type: choice
         options:
+          - macos-15-intel
+          - macos-26-intel
           - macos-15
           - macos-latest
-          - macos-15-intel
       sign_mode:
         description: '签名方式（auto = 有证书就签名，否则免签名）'
         required: true
@@ -66,8 +67,11 @@ jobs:
     name: 归档并导出 IPA
     # macos-14 镜像已于 2026-11-02 退役，继续使用会报
     # "The configuration 'macos-14-arm64-us-default' is not supported"。
-    # 默认固定在 macos-15（arm64 / Xcode 16.x）；手动运行时可从 runner 输入切换。
-    runs-on: ${{ github.event.inputs.runner || 'macos-15' }}
+    # 默认固定在 macos-15-intel（Intel / Xcode 16.x）：部分免费账号没有 arm64 macOS
+    # runner 配额，用 Intel 标签可避免任务在启动前就被拒。
+    # 想换镜像不用改文件：仓库 Settings → Variables 加 RUNNER_LABEL 即可覆盖；
+    # 手动运行时也可以用上面的 runner 输入切换。
+    runs-on: ${{ vars.RUNNER_LABEL || github.event.inputs.runner || 'macos-15-intel' }}
 
     steps:
       - name: 检出代码
